@@ -3,6 +3,7 @@
 // ════════════════════════════════════════════════════════════════════════
 const { Pool } = require('pg');
 
+// Railway auto-injects DATABASE_URL when you attach a Postgres service
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
@@ -13,15 +14,15 @@ async function initDB() {
     CREATE TABLE IF NOT EXISTS signals (
       id SERIAL PRIMARY KEY,
       created_at TIMESTAMP DEFAULT NOW(),
-      signal_type VARCHAR(20) NOT NULL,
-      label VARCHAR(10) NOT NULL,
+      signal_type VARCHAR(20) NOT NULL,      -- 'SCHEDULED' or 'EMERGENCY'
+      label VARCHAR(10) NOT NULL,             -- 'BUY', 'SELL', 'WAIT'
       direction VARCHAR(20),
       strength VARCHAR(20),
       score INTEGER,
       entry_price DECIMAL(10,2),
       take_profit DECIMAL(10,2),
       stop_loss DECIMAL(10,2),
-      current_sl DECIMAL(10,2),
+      current_sl DECIMAL(10,2),               -- moves with trailing stop
       atr DECIMAL(10,2),
       risk_reward DECIMAL(5,2),
       rsi DECIMAL(5,2),
@@ -37,7 +38,7 @@ async function initDB() {
       has_econ_event BOOLEAN,
       reasons TEXT,
       price_source VARCHAR(30),
-      trade_status VARCHAR(20) DEFAULT 'OPEN',
+      trade_status VARCHAR(20) DEFAULT 'OPEN', -- OPEN, BREAKEVEN, TRAILING, CLOSED_WIN, CLOSED_LOSS, CLOSED_BE
       exit_price DECIMAL(10,2),
       closed_at TIMESTAMP,
       pnl DECIMAL(10,2)
@@ -116,7 +117,16 @@ async function updateTradeStatus(id, status, currentSL, exitPrice, pnl) {
 }
 
 async function logPrice(price, source) {
-  await pool.query(`INSERT INTO price_log (price, source) VALUES ($1::decimal, $2)`, [price, source]);
+  // Explicit numeric type cast on BOTH the value and ensuring source is
+  // cast to its target type too - this resolves a documented node-postgres
+  // issue (driver sends JS numbers as 'double precision' by default,
+  // conflicting with the DECIMAL/numeric column type) that a single-side
+  // cast doesn't always resolve, per github.com/brianc/node-postgres/issues/1205
+  const numericPrice = Number(price);
+  await pool.query(
+    `INSERT INTO price_log (price, source) VALUES ($1::numeric, $2::varchar)`,
+    [numericPrice, String(source)]
+  );
 }
 
 async function getWinRate() {
@@ -140,6 +150,7 @@ async function getWinRate() {
 }
 
 async function getPriceHistory(hours = 720) {
+  // 720 hours = 30 days, matches the chart's previous 30-day window
   const result = await pool.query(`
     SELECT price, logged_at FROM price_log
     WHERE logged_at > NOW() - INTERVAL '1 hour' * $1
