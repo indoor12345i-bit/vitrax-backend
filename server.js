@@ -123,8 +123,19 @@ async function checkLivePriceAndTrades() {
 
     if (currentPrice === null) return;
 
-    await db.logPrice(currentPrice, source);
-    await tradeManager.checkOpenTrades(currentPrice);
+    try {
+      await db.logPrice(currentPrice, source);
+    } catch (logErr) {
+      console.error('[ISOLATED] logPrice specifically failed:', logErr.message);
+      console.error('[ISOLATED] Full stack:', logErr.stack);
+    }
+
+    try {
+      await tradeManager.checkOpenTrades(currentPrice);
+    } catch (tradeErr) {
+      console.error('[ISOLATED] checkOpenTrades specifically failed:', tradeErr.message);
+      console.error('[ISOLATED] Full stack:', tradeErr.stack);
+    }
   } catch (err) {
     console.error('Live price check failed:', err.message);
   }
