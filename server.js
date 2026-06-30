@@ -40,10 +40,21 @@ async function generateScheduledSignal() {
       lastNewsTime = now;
     }
 
-    const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment);
+    // Fetch real OHLCV candles from MT5 for AVWAP calculation
+    // Uses 1-hour candles, last 48 (2 full days) so daily AVWAP has enough data
+    // Gracefully degrades to null if MT5 connection isn't ready yet
+    const candles = await mt5.fetchMT5Candles('1h', 48).catch(() => null);
+    if (candles) {
+      console.log(`[AVWAP] Using ${candles.length} real MT5 candles for AVWAP calculation`);
+    } else {
+      console.log('[AVWAP] MT5 candles unavailable - signal will run without AVWAP');
+    }
+
+    const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles);
     const saved = await db.saveSignal(sig, 'SCHEDULED', priceData.source);
 
     console.log(`Signal generated: ${sig.label} (${sig.strength}) at $${sig.entry} — confidence ${sig.confidence}%`);
+    if (sig.avwap) console.log(`[AVWAP] Daily AVWAP: $${sig.avwap} — price is ${sig.entry > sig.avwap ? 'ABOVE' : 'BELOW'} AVWAP`);
     console.log(`Saved as signal #${saved.id}`);
 
     return saved;
@@ -59,11 +70,15 @@ async function generateScheduledSignal() {
 async function checkEmergency() {
   try {
     const priceData = await priceFetcher.fetchGoldPrice();
-    const emergency = calc.checkEmergencyTrigger(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment);
+
+    // Fetch candles for AVWAP filtering - same as scheduled signals
+    const candles = await mt5.fetchMT5Candles('1h', 48).catch(() => null);
+
+    const emergency = calc.checkEmergencyTrigger(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles);
 
     if (emergency) {
       console.log('\n🚨 EMERGENCY SIGNAL TRIGGERED:', emergency.signal, 'at $' + emergency.entry);
-      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment);
+      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles);
 
       // Build a fully consistent signal object - every field that depends on
       // label/direction gets explicitly overwritten together, not just label.
