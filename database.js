@@ -58,6 +58,7 @@ async function initDB() {
 }
 
 async function saveSignal(sig, type, priceSource) {
+  const tradeStatus = sig.label === 'WAIT' ? 'WAIT' : 'OPEN';
   const result = await pool.query(`
     INSERT INTO signals (
       signal_type, label, direction, strength, score,
@@ -65,15 +66,20 @@ async function saveSignal(sig, type, priceSource) {
       rsi, ema14, ema25, confidence, fear_greed, candle_pattern, session,
       whale_detected, stop_hunt_detected, is_choppy, has_econ_event,
       reasons, price_source, trade_status
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-      CASE WHEN $2 = 'WAIT' THEN 'WAIT' ELSE 'OPEN' END)
+    ) VALUES (
+      $1, $2, $3, $4, $5,
+      $6::decimal, $7::decimal, $8::decimal, $8::decimal, $9::decimal, $10::decimal,
+      $11::decimal, $12::decimal, $13::decimal, $14, $15, $16, $17,
+      $18, $19, $20, $21,
+      $22, $23, $24
+    )
     RETURNING *
   `, [
     type, sig.label, sig.direction, sig.strength, sig.score,
     sig.entry, sig.takeProfit, sig.stopLoss, sig.atr, sig.riskReward,
     sig.rsi, sig.ema14, sig.ema25, sig.confidence, sig.fearGreed,
     sig.candlePattern, sig.session, sig.whaleDetected, sig.stopHuntDetected,
-    sig.isChoppy, sig.hasEconEvent, sig.reasons.join(' · '), priceSource
+    sig.isChoppy, sig.hasEconEvent, sig.reasons.join(' · '), priceSource, tradeStatus
   ]);
   return result.rows[0];
 }
