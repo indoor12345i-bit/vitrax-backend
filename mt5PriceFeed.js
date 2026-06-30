@@ -23,6 +23,7 @@ const SYMBOL = 'XAUUSD-'; // Confirmed exact symbol from PrimaCapital's MT5 Mark
 // keep the connection alive, reuse it for all subsequent price reads.
 let cachedConnection = null;
 let cachedApi = null;
+let cachedAccount = null; // needed for getHistoricalCandles (called on account, not connection)
 let connectionPromise = null;
 
 async function getConnection() {
@@ -62,6 +63,7 @@ async function getConnection() {
     }
 
     await account.waitConnected();
+    cachedAccount = account; // cache for getHistoricalCandles calls
 
     const connection = account.getStreamingConnection();
     await connection.connect();
@@ -130,4 +132,52 @@ async function fetchMT5Price() {
   }
 }
 
-module.exports = { fetchMT5Price };
+// ════════════════════════════════════════════════════════════════════════
+// OHLCV CANDLE DATA — for AVWAP and volume-based analysis
+// Fetches real candle data from PrimaCapital via MetaApi, including
+// volume which is not available from any of the website-based APIs.
+// Used to calculate Anchored VWAP (AVWAP) - anchored to daily open.
+// ════════════════════════════════════════════════════════════════════════
+async function fetchMT5Candles(timeframe, count) {
+  if (!cachedAccount) {
+    // Ensure connection is established first
+    try {
+      await getConnection();
+    } catch (err) {
+      console.log('[MT5] Cannot fetch candles - no account connection:', err.message);
+      return null;
+    }
+  }
+
+  if (!cachedAccount) {
+    console.log('[MT5] Cannot fetch candles - account not yet cached');
+    return null;
+  }
+
+  try {
+    const raw = await cachedAccount.getHistoricalCandles(SYMBOL, timeframe, null, count);
+    if (!raw || raw.length === 0) {
+      console.log('[MT5] No candle data returned');
+      return null;
+    }
+
+    // Normalize to a clean format for calculations.js
+    // Use tickVolume as primary (always available), volume as fallback
+    const candles = raw.map(c => ({
+      time: c.time,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.tickVolume || c.volume || 1
+    }));
+
+    console.log(`[MT5] Fetched ${candles.length} ${timeframe} candles for AVWAP`);
+    return candles;
+  } catch (err) {
+    console.error('[MT5] fetchMT5Candles failed:', err.message);
+    return null;
+  }
+}
+
+module.exports = { fetchMT5Price, fetchMT5Candles };
