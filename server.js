@@ -123,18 +123,19 @@ async function checkLivePriceAndTrades() {
 
     if (currentPrice === null) return;
 
+    // Logged separately so a failure in one doesn't prevent the other from
+    // running - kept this structure since it's what actually let us find
+    // the real bug earlier (each failure point isolated with its own trace).
     try {
       await db.logPrice(currentPrice, source);
     } catch (logErr) {
-      console.error('[ISOLATED] logPrice specifically failed:', logErr.message);
-      console.error('[ISOLATED] Full stack:', logErr.stack);
+      console.error('logPrice failed:', logErr.message);
     }
 
     try {
       await tradeManager.checkOpenTrades(currentPrice);
     } catch (tradeErr) {
-      console.error('[ISOLATED] checkOpenTrades specifically failed:', tradeErr.message);
-      console.error('[ISOLATED] Full stack:', tradeErr.stack);
+      console.error('checkOpenTrades failed:', tradeErr.message);
     }
   } catch (err) {
     console.error('Live price check failed:', err.message);
