@@ -175,6 +175,16 @@ app.get('/api/live-price', async (req, res) => {
   }
 });
 
+app.get('/api/price-history', async (req, res) => {
+  try {
+    const hours = parseInt(req.query.hours) || 720;
+    const history = await db.getPriceHistory(hours);
+    res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Manual trigger endpoints (useful for testing without waiting for cron)
 app.post('/api/trigger/signal', async (req, res) => {
   const result = await generateScheduledSignal();
