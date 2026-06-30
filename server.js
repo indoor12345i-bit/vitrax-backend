@@ -160,12 +160,14 @@ async function checkLivePriceAndTrades() {
 // ════════════════════════════════════════════════════════════════════════
 // SCHEDULER — cron jobs
 // ════════════════════════════════════════════════════════════════════════
-// Scheduled signals at 00:00, 04:48, 09:36, 14:24, 19:12 (5x per day, every 4.8h)
+// Scheduled signals: 7x per day, every 3.5 hours
 cron.schedule('0 0 * * *', generateScheduledSignal);   // 00:00
-cron.schedule('48 4 * * *', generateScheduledSignal);  // 04:48
-cron.schedule('36 9 * * *', generateScheduledSignal);  // 09:36
-cron.schedule('24 14 * * *', generateScheduledSignal); // 14:24
-cron.schedule('12 19 * * *', generateScheduledSignal); // 19:12
+cron.schedule('30 3 * * *', generateScheduledSignal);  // 03:30
+cron.schedule('0 7 * * *', generateScheduledSignal);   // 07:00
+cron.schedule('30 10 * * *', generateScheduledSignal); // 10:30
+cron.schedule('0 14 * * *', generateScheduledSignal);  // 14:00
+cron.schedule('30 17 * * *', generateScheduledSignal); // 17:30
+cron.schedule('0 21 * * *', generateScheduledSignal);  // 21:00
 
 // Emergency check every 10 minutes
 cron.schedule('*/10 * * * *', checkEmergency);
@@ -268,7 +270,7 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`\n✅ Vitrax backend running on port ${PORT}`);
-    console.log('Scheduled signals: 00:00, 04:48, 09:36, 14:24, 19:12 daily');
+    console.log('Scheduled signals: 00:00, 03:30, 07:00, 10:30, 14:00, 17:30, 21:00 daily (7x)');
     console.log('Emergency checks: every 10 minutes');
     console.log('Live price + trade management: every 30 seconds');
   });
