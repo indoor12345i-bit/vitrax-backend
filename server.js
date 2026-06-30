@@ -123,6 +123,11 @@ async function checkLivePriceAndTrades() {
 
     if (currentPrice === null) return;
 
+    // DEBUG: logging exact type/value to pin down the "inconsistent types"
+    // error we're seeing intermittently - once we see what's actually
+    // coming through, this logging can be removed.
+    console.log(`[DEBUG] About to log price: value=${currentPrice}, type=${typeof currentPrice}, source=${source}, sourceType=${typeof source}`);
+
     await db.logPrice(currentPrice, source);
     await tradeManager.checkOpenTrades(currentPrice);
   } catch (err) {
