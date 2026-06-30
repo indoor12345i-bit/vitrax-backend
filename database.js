@@ -137,6 +137,14 @@ async function logPrice(price, source) {
 }
 
 async function getWinRate() {
+  // TRACK_RECORD_START: signals before this timestamp were generated during
+  // active development/testing today (2026-06-30) - manual test triggers,
+  // signals created while APIs were being swapped, and trades that sat
+  // unmanaged due to the updateTradeStatus bug (fixed same day). Including
+  // them would misrepresent real performance. Only signals from this
+  // cutoff forward count toward the genuine track record.
+  const TRACK_RECORD_START = process.env.TRACK_RECORD_START || '2026-06-30T18:00:00Z';
+
   const result = await pool.query(`
     SELECT
       COUNT(*) FILTER (WHERE trade_status = 'CLOSED_WIN') as wins,
@@ -144,15 +152,16 @@ async function getWinRate() {
       COUNT(*) FILTER (WHERE trade_status = 'CLOSED_BE') as breakevens,
       COUNT(*) FILTER (WHERE trade_status LIKE 'CLOSED%') as total_closed,
       SUM(pnl) FILTER (WHERE trade_status LIKE 'CLOSED%') as total_pnl
-    FROM signals WHERE label != 'WAIT'
-  `);
+    FROM signals WHERE label != 'WAIT' AND created_at >= $1::timestamptz
+  `, [TRACK_RECORD_START]);
   const row = result.rows[0];
   const totalClosed = parseInt(row.total_closed) || 0;
   const wins = parseInt(row.wins) || 0;
   return {
     wins, losses: parseInt(row.losses) || 0, breakevens: parseInt(row.breakevens) || 0,
     totalClosed, totalPnl: parseFloat(row.total_pnl) || 0,
-    winRate: totalClosed > 0 ? +((wins / totalClosed) * 100).toFixed(1) : null
+    winRate: totalClosed > 0 ? +((wins / totalClosed) * 100).toFixed(1) : null,
+    trackRecordStart: TRACK_RECORD_START
   };
 }
 
