@@ -62,13 +62,29 @@ async function checkEmergency() {
 
     if (emergency) {
       console.log('\n🚨 EMERGENCY SIGNAL TRIGGERED:', emergency.signal, 'at $' + emergency.entry);
-      const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment);
-      sig.label = emergency.signal;
-      sig.entry = emergency.entry;
-      sig.takeProfit = emergency.takeProfit;
-      sig.stopLoss = emergency.stopLoss;
-      sig.confidence = emergency.confidence;
-      sig.reasons = emergency.reasons;
+      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment);
+
+      // Build a fully consistent signal object - every field that depends on
+      // label/direction gets explicitly overwritten together, not just label.
+      // This was the bug: previously only sig.label was overwritten, leaving
+      // direction/strength/score from the calm baseline calc mismatched
+      // against the emergency verdict.
+      const sig = {
+        ...baseline,
+        label: emergency.signal,
+        direction: emergency.signal === 'BUY' ? 'LONG' : 'SHORT',
+        strength: 'EMERGENCY',
+        score: emergency.signal === 'BUY' ? 6 : -6, // emergency = max conviction by definition
+        entry: emergency.entry,
+        takeProfit: emergency.takeProfit,
+        stopLoss: emergency.stopLoss,
+        confidence: emergency.confidence,
+        reasons: emergency.reasons,
+        riskReward: emergency.takeProfit && emergency.stopLoss
+          ? +(Math.abs(emergency.takeProfit - emergency.entry) / Math.abs(emergency.entry - emergency.stopLoss)).toFixed(2)
+          : null
+      };
+
       await db.saveSignal(sig, 'EMERGENCY', priceData.source);
     }
   } catch (err) {
