@@ -9,6 +9,7 @@ const cron = require('node-cron');
 
 const calc = require('./calculations');
 const priceFetcher = require('./priceFetcher');
+const mt5 = require('./mt5PriceFeed');
 const db = require('./database');
 const tradeManager = require('./tradeManager');
 
@@ -94,13 +95,36 @@ async function checkEmergency() {
 
 // ════════════════════════════════════════════════════════════════════════
 // LIVE PRICE CHECK — runs every 30 seconds, manages open trades
+//
+// UPDATED: now uses the real MT5 connection (PrimaCapital, via MetaApi) as
+// the primary source, since that's confirmed to match the actual broker
+// price exactly - not an estimate from a third-party website. Falls back
+// to the 9-API website chain only if the MT5 connection has an issue,
+// so trade management never goes completely blind even if MetaApi is
+// temporarily unavailable.
 // ════════════════════════════════════════════════════════════════════════
 async function checkLivePriceAndTrades() {
   try {
-    const live = await priceFetcher.fetchLivePrice();
-    if (!live) return;
-    await db.logPrice(live.price, live.source);
-    await tradeManager.checkOpenTrades(live.price);
+    let currentPrice = null;
+    let source = null;
+
+    const mt5Price = await mt5.fetchMT5Price();
+    if (mt5Price && mt5Price.price) {
+      currentPrice = mt5Price.price;
+      source = mt5Price.source;
+    } else {
+      console.log('MT5 price unavailable this cycle, falling back to website API chain...');
+      const priceData = await priceFetcher.fetchGoldPrice();
+      if (priceData && priceData.closes && priceData.closes.length > 0) {
+        currentPrice = priceData.closes[priceData.closes.length - 1];
+        source = priceData.source;
+      }
+    }
+
+    if (currentPrice === null) return;
+
+    await db.logPrice(currentPrice, source);
+    await tradeManager.checkOpenTrades(currentPrice);
   } catch (err) {
     console.error('Live price check failed:', err.message);
   }
@@ -166,20 +190,28 @@ app.get('/api/win-rate', async (req, res) => {
   }
 });
 
-app.get('/api/live-price', async (req, res) => {
-  try {
-    const live = await priceFetcher.fetchLivePrice();
-    res.json(live);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.get('/api/price-history', async (req, res) => {
   try {
     const hours = parseInt(req.query.hours) || 720;
     const history = await db.getPriceHistory(hours);
     res.json(history);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Live price, now sourced directly from PrimaCapital's MT5 feed via MetaApi,
+// not from third-party websites. Confirmed today that gold-api.com was
+// returning prices $30+ off from the real broker - this connects to the
+// actual account instead, so what's shown matches what PrimaCapital's own
+// terminal shows.
+app.get('/api/live-price', async (req, res) => {
+  try {
+    const live = await mt5.fetchMT5Price();
+    if (!live) {
+      return res.json(null);
+    }
+    res.json(live);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
