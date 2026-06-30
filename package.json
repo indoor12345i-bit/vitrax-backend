@@ -1,0 +1,19 @@
+{
+  "name": "vitrax-backend",
+  "version": "1.0.0",
+  "description": "Vitrax gold signal backend - runs analysis on schedule, stores results, serves to dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0",
+    "pg": "^8.11.3",
+    "cors": "^2.8.5",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
