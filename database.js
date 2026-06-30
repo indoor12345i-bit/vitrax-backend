@@ -107,13 +107,20 @@ async function getOpenTrades() {
 }
 
 async function updateTradeStatus(id, status, currentSL, exitPrice, pnl) {
+  // FOUND VIA STACK TRACE: $2 (status) was being used twice in this query -
+  // once for the direct column assignment (trade_status = $2) and again
+  // inside the CASE/LIKE comparison. Postgres independently infers a type
+  // for each usage and throws "inconsistent types deduced" when they
+  // conflict - the exact documented behavior described in multiple
+  // node-postgres/PostgreSQL bug reports. Giving the CASE comparison its
+  // own parameter ($6) instead of reusing $2 eliminates the ambiguity.
   await pool.query(`
     UPDATE signals
     SET trade_status = $2, current_sl = COALESCE($3::decimal, current_sl),
-        exit_price = $4::decimal, closed_at = CASE WHEN $2 LIKE 'CLOSED%' THEN NOW() ELSE closed_at END,
+        exit_price = $4::decimal, closed_at = CASE WHEN $6 LIKE 'CLOSED%' THEN NOW() ELSE closed_at END,
         pnl = $5::decimal
     WHERE id = $1
-  `, [id, status, currentSL, exitPrice, pnl]);
+  `, [id, status, currentSL, exitPrice, pnl, status]);
 }
 
 async function logPrice(price, source) {
