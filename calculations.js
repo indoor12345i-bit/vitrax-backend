@@ -64,6 +64,54 @@ function stochastic(closes, highs, lows, kPeriod, dPeriod) {
   return { k: k, d: d };
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// ANCHORED VWAP (AVWAP) — anchored to start of current UTC trading day
+//
+// AVWAP = Σ(typical_price × volume) / Σ(volume)
+// where typical_price = (high + low + close) / 3
+//
+// Requires real OHLCV candle data with volume, which we pull from
+// PrimaCapital's MT5 feed via MetaApi. Website-based APIs don't
+// provide volume, so this only runs when MT5 candle data is available.
+//
+// Interpretation:
+//   price > AVWAP → buyers in control since daily open → bullish bias
+//   price < AVWAP → sellers in control since daily open → bearish bias
+//
+// Used as a confirmation filter: a BUY signal above AVWAP is more
+// reliable than one below it (not fighting institutional average).
+// ════════════════════════════════════════════════════════════════════════
+function calcAVWAP(candles) {
+  if (!candles || candles.length === 0) return null;
+
+  // Anchor to start of current UTC trading day
+  var now = new Date();
+  var dayStart = new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()
+  ));
+
+  // Only use candles from today's session
+  var todayCandles = candles.filter(function(c) {
+    return new Date(c.time) >= dayStart;
+  });
+
+  if (todayCandles.length === 0) {
+    // If no candles yet today (market just opened), use last 20 candles
+    // as a rolling approximation rather than returning null entirely
+    todayCandles = candles.slice(-20);
+  }
+
+  var sumTPV = 0, sumVol = 0;
+  todayCandles.forEach(function(c) {
+    var typicalPrice = (c.high + c.low + c.close) / 3;
+    var vol = c.volume || 1; // volume always >= 1 to avoid division issues
+    sumTPV += typicalPrice * vol;
+    sumVol += vol;
+  });
+
+  return sumVol > 0 ? +(sumTPV / sumVol).toFixed(2) : null;
+}
+
 function calcATR(closes, highs, lows, period) {
   period = period || 14;
   var trueRanges = [];
@@ -205,7 +253,7 @@ function checkEconEvent() {
 // ════════════════════════════════════════════════════════════════════════
 // SIGNAL SCORING — combines all layers into one BUY/SELL/WAIT
 // ════════════════════════════════════════════════════════════════════════
-function calcSignal(closes, highs, lows, newsSentiment) {
+function calcSignal(closes, highs, lows, newsSentiment, candles) {
   var e14arr = ema(closes,14), e25arr = ema(closes,25);
   var rsiArr = rsi(closes,14);
   var e14v = e14arr[e14arr.length-1], e25v = e25arr[e25arr.length-1];
@@ -242,6 +290,22 @@ function calcSignal(closes, highs, lows, newsSentiment) {
   if (kv<20 && dv<20) { score+=2; reasons.push('Stochastic oversold'); }
   else if (kv>80 && dv>80) { score-=2; reasons.push('Stochastic overbought'); }
 
+  // ── AVWAP (Anchored VWAP) — only when real MT5 candle data is available ──
+  // Price above daily AVWAP = buyers in control since daily open = bullish
+  // Price below daily AVWAP = sellers in control since daily open = bearish
+  // Acts as a confirmation filter: BUY above AVWAP is more reliable than
+  // BUY below it, since we'd be trading WITH institutional order flow.
+  var avwapValue = candles ? calcAVWAP(candles) : null;
+  if (avwapValue !== null) {
+    if (p > avwapValue) {
+      score++;
+      reasons.push('Price above daily AVWAP ($' + avwapValue + ')');
+    } else if (p < avwapValue) {
+      score--;
+      reasons.push('Price below daily AVWAP ($' + avwapValue + ')');
+    }
+  }
+
   var label, dir, strength = '';
   if (score>=4) { label='BUY'; dir='LONG'; strength='STRONG'; }
   else if (score>=2) { label='BUY'; dir='LONG'; strength='MODERATE'; }
@@ -270,6 +334,11 @@ function calcSignal(closes, highs, lows, newsSentiment) {
   adj += sessionInfo.confidence;
   if (dxyScore!==0 && ((dxyScore>0 && label==='BUY')||(dxyScore<0 && label==='SELL'))) adj+=3;
   if (pattern.signal===label) adj+=4;
+  // AVWAP confirmation boosts confidence when aligned, reduces when against
+  if (avwapValue !== null) {
+    if ((label==='BUY' && p > avwapValue) || (label==='SELL' && p < avwapValue)) adj+=5;
+    else if ((label==='BUY' && p < avwapValue) || (label==='SELL' && p > avwapValue)) adj-=7;
+  }
   var confidence = Math.min(85, Math.max(30, Math.round(base+adj)));
 
   return {
@@ -278,18 +347,19 @@ function calcSignal(closes, highs, lows, newsSentiment) {
     rsi: rsiV, ema14: e14v, ema25: e25v, confidence: confidence,
     fearGreed: fgScore, candlePattern: pattern.name, session: sessionInfo.session,
     whaleDetected: whaleDetected, stopHuntDetected: stopHunt, isChoppy: isChoppy,
-    hasEconEvent: hasEvent, dxyScore: dxyScore
+    hasEconEvent: hasEvent, dxyScore: dxyScore, avwap: avwapValue
   };
 }
 
 // ════════════════════════════════════════════════════════════════════════
 // EMERGENCY CHECK
 // ════════════════════════════════════════════════════════════════════════
-function checkEmergencyTrigger(closes, highs, lows, newsSentiment) {
-  if (!closes || closes.length<5) return null;
+function checkEmergencyTrigger(closes, highs, lows, newsSentiment, candles) {
+  if (!closes || closes.length < 8) return null; // need more history for confirmation
+
   var price = closes[closes.length-1];
   var prevPrice = closes[closes.length-2];
-  var priceMove = Math.abs(price-prevPrice);
+  var priceMove = Math.abs(price - prevPrice);
   var reasons = [], emergencyScore = 0, sig = null;
   var atrVal = calcATR(closes, highs, lows, 14);
   var rsiArr = rsi(closes, 14);
@@ -298,33 +368,109 @@ function checkEmergencyTrigger(closes, highs, lows, newsSentiment) {
   var macdData = macd(closes);
   var fgScore = calcFearGreed(closes, rsiV, bollData, macdData);
 
-  if (priceMove > atrVal*0.8) {
-    reasons.push('Large price move: $'+priceMove.toFixed(2));
-    emergencyScore += 30; sig = price>prevPrice ? 'BUY' : 'SELL';
+  // ── CHANGE 1: Raised threshold from 0.8x ATR to 2x ATR ──────────────
+  // A move of 0.8x ATR is essentially a normal candle. We only want to
+  // fire on genuinely exceptional moves - 2x ATR is a real, unusual spike.
+  if (priceMove > atrVal * 2.0) {
+    reasons.push('Large price move: $' + priceMove.toFixed(2));
+    emergencyScore += 30;
+    sig = price > prevPrice ? 'BUY' : 'SELL';
   }
-  if (rsiV>80) { reasons.push('RSI extremely overbought'); emergencyScore+=25; sig=sig||'SELL'; }
-  else if (rsiV<20) { reasons.push('RSI extremely oversold'); emergencyScore+=25; sig=sig||'BUY'; }
+
+  // ── CHANGE 2: Multi-candle confirmation ──────────────────────────────
+  // A single candle breaking a level proves nothing - require the price
+  // to have held the direction consistently over the last 3 candles before
+  // calling it a genuine breakout rather than a spike reversal.
+  var last3 = closes.slice(-4); // 4 candles: 3 moves
+  var allUp = last3.every(function(c, i) { return i === 0 || c >= last3[i-1]; });
+  var allDown = last3.every(function(c, i) { return i === 0 || c <= last3[i-1]; });
+
+  if (rsiV > 85) { // Raised from 80 to 85 - truly extreme only
+    reasons.push('RSI extremely overbought (' + rsiV.toFixed(1) + ')');
+    emergencyScore += 25;
+    sig = sig || 'SELL';
+  } else if (rsiV < 15) { // Raised from 20 to 15
+    reasons.push('RSI extremely oversold (' + rsiV.toFixed(1) + ')');
+    emergencyScore += 25;
+    sig = sig || 'BUY';
+  }
 
   var upper = bollData.upper[bollData.upper.length-1];
   var lower = bollData.lower[bollData.lower.length-1];
-  if (price>upper) { reasons.push('Broke above Bollinger upper'); emergencyScore+=25; sig=sig||'SELL'; }
-  else if (price<lower) { reasons.push('Broke below Bollinger lower'); emergencyScore+=25; sig=sig||'BUY'; }
 
-  if (fgScore<=15) { reasons.push('Extreme fear index'); emergencyScore+=15; sig=sig||'BUY'; }
-  else if (fgScore>=85) { reasons.push('Extreme greed index'); emergencyScore+=15; sig=sig||'SELL'; }
+  // ── CHANGE 3: Require directional confirmation for Bollinger breaks ──
+  // Price breaking above upper band while 3 consecutive candles are rising
+  // is more reliable than a single candle spike above the band.
+  if (price > upper && allUp) {
+    reasons.push('Confirmed break above Bollinger upper (3 candles up)');
+    emergencyScore += 25;
+    sig = sig || 'SELL'; // overbought - potential reversal sell
+  } else if (price < lower && allDown) {
+    reasons.push('Confirmed break below Bollinger lower (3 candles down)');
+    emergencyScore += 25;
+    sig = sig || 'BUY'; // oversold - potential reversal buy
+  } else if (price > upper || price < lower) {
+    // Single-candle Bollinger break without confirmation - much lower weight
+    reasons.push('Bollinger break (unconfirmed - single candle)');
+    emergencyScore += 8; // was 25, now only counts minimally
+  }
+
+  if (fgScore <= 10) { // Raised from 15 to 10
+    reasons.push('Extreme fear index (' + fgScore + ')');
+    emergencyScore += 15;
+    sig = sig || 'BUY';
+  } else if (fgScore >= 90) { // Raised from 85 to 90
+    reasons.push('Extreme greed index (' + fgScore + ')');
+    emergencyScore += 15;
+    sig = sig || 'SELL';
+  }
 
   var criticalEvent = checkEconEvent();
   if (criticalEvent && criticalEvent.impact === 'CRITICAL') {
-    reasons.push('CRITICAL event today: '+criticalEvent.name);
+    reasons.push('CRITICAL event today: ' + criticalEvent.name);
     emergencyScore += 20;
-    sig = sig || (criticalEvent.goldEffect.indexOf('bullish')!==-1 ? 'BUY' : 'SELL');
+    sig = sig || (criticalEvent.goldEffect.indexOf('bullish') !== -1 ? 'BUY' : 'SELL');
   }
 
-  if (emergencyScore>=45 && sig && reasons.length>=2) {
+  // ── CHANGE 4: Raised minimum threshold from 45 to 75 ─────────────────
+  // The old threshold (45) fired on just a price move + Bollinger break
+  // happening simultaneously on the same spike - exactly the fake-out
+  // pattern we kept seeing. 75 requires genuinely multiple independent
+  // conditions to align, not two things caused by the same single candle.
+  //
+  // Also require at least 3 distinct reasons (not just 2) before firing.
+  if (emergencyScore >= 75 && sig && reasons.length >= 3) {
     var levels = calcDynamicLevels(price, sig, atrVal, rsiV);
+
+    // ── AVWAP directional filter ──────────────────────────────────────
+    // If we have real MT5 candle data, check that the emergency signal
+    // direction agrees with the daily AVWAP. A BUY signal when price is
+    // below AVWAP (fighting institutional sellers) is significantly less
+    // reliable than one where price is above AVWAP (going with them).
+    // We don't block the signal entirely, but reduce confidence sharply
+    // when going against AVWAP, since that's one of the main fake-out
+    // patterns we observed in production.
+    var avwapValue = candles ? calcAVWAP(candles) : null;
+    var confidence = Math.min(75, 40 + emergencyScore * 0.5);
+
+    if (avwapValue !== null) {
+      var withAVWAP = (sig === 'BUY' && price > avwapValue) ||
+                      (sig === 'SELL' && price < avwapValue);
+      var againstAVWAP = (sig === 'BUY' && price < avwapValue) ||
+                         (sig === 'SELL' && price > avwapValue);
+
+      if (withAVWAP) {
+        confidence = Math.min(75, confidence + 5);
+        reasons.push('Confirmed by daily AVWAP ($' + avwapValue + ')');
+      } else if (againstAVWAP) {
+        confidence = Math.max(30, confidence - 15);
+        reasons.push('⚠️ Against daily AVWAP ($' + avwapValue + ') — reduced confidence');
+      }
+    }
+
     return {
       signal: sig, entry: price, takeProfit: levels.tp, stopLoss: levels.sl,
-      confidence: Math.min(85, 50+emergencyScore), reasons: reasons
+      confidence: Math.round(confidence), reasons: reasons
     };
   }
   return null;
@@ -333,6 +479,6 @@ function checkEmergencyTrigger(closes, highs, lows, newsSentiment) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
-  displayDXY, analyzeNewsSentiment, checkEconEvent, calcSignal, checkEmergencyTrigger,
+  displayDXY, analyzeNewsSentiment, checkEconEvent, calcSignal, checkEmergencyTrigger, calcAVWAP,
   ECON_EVENTS
 };
