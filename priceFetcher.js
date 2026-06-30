@@ -44,24 +44,36 @@ async function tryAlphaVantage() {
 
 async function tryGoldApiCom() {
   const r = await fetch('https://api.gold-api.com/price/XAU');
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`gold-api.com: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data.price) throw new Error('gold-api.com: no data');
+  if (!data || !data.price) throw new Error('gold-api.com: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const d = buildCloses(parseFloat(data.price), data.high, data.low);
   return { ...d, source: 'gold-api.com' };
 }
 
 async function tryGoldApiIo() {
   const r = await fetch('https://www.goldapi.io/api/XAU/USD', { headers: { 'x-access-token': KEYS.goldapi } });
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`GoldAPI.io: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data.price) throw new Error('GoldAPI.io: no data');
+  if (!data || !data.price) throw new Error('GoldAPI.io: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const d = buildCloses(parseFloat(data.price), data.high_price, data.low_price);
   return { ...d, source: 'GoldAPI.io' };
 }
 
 async function tryGoldPricez() {
   const r = await fetch('https://goldpricez.com/api/rates/currency/usd/measure/ounce', { headers: { 'X-API-KEY': KEYS.goldpricez } });
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`GoldPricez: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data.ounce_price_usd) throw new Error('GoldPricez: no data');
+  if (!data || !data.ounce_price_usd) throw new Error('GoldPricez: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const cur = parseFloat(data.ounce_price_usd);
   const high = parseFloat(data.ounce_price_usd_today_high) || cur + 15;
   const low = parseFloat(data.ounce_price_usd_today_low) || cur - 15;
@@ -71,8 +83,12 @@ async function tryGoldPricez() {
 
 async function tryMetalpriceApi() {
   const r = await fetch('https://api.metalpriceapi.com/v1/latest?api_key=' + KEYS.metalprice + '&base=XAU&currencies=USD');
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`MetalpriceAPI: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data.rates || !data.rates.XAUUSD) throw new Error('MetalpriceAPI: no data');
+  if (!data || !data.rates || !data.rates.XAUUSD) throw new Error('MetalpriceAPI: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const cur = +(1 / data.rates.XAUUSD).toFixed(2);
   const d = buildCloses(cur, cur + 15, cur - 15);
   return { ...d, source: 'MetalpriceAPI' };
@@ -80,8 +96,12 @@ async function tryMetalpriceApi() {
 
 async function tryApiNinjas() {
   const r = await fetch('https://api.api-ninjas.com/v1/goldprice', { headers: { 'X-Api-Key': KEYS.apininjas } });
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`API Ninjas: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data.price) throw new Error('API Ninjas: no data');
+  if (!data || !data.price) throw new Error('API Ninjas: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const cur = parseFloat(data.price);
   const d = buildCloses(cur, cur + 15, cur - 15);
   return { ...d, source: 'API Ninjas' };
@@ -89,8 +109,12 @@ async function tryApiNinjas() {
 
 async function tryCommodityApi() {
   const r = await fetch('https://api.commoditypriceapi.com/v2/rates/latest?apiKey=' + KEYS.commodity + '&symbols=XAU');
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`CommodityAPI: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data.rates || !data.rates.XAU) throw new Error('CommodityAPI: no data');
+  if (!data || !data.rates || !data.rates.XAU) throw new Error('CommodityAPI: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const cur = parseFloat(data.rates.XAU);
   const d = buildCloses(cur, cur + 15, cur - 15);
   return { ...d, source: 'CommodityPriceAPI' };
@@ -98,8 +122,12 @@ async function tryCommodityApi() {
 
 async function tryUniRateApi() {
   const r = await fetch('https://api.unirateapi.com/api/commodities/rates?from=USD&to=XAU&apiKey=' + KEYS.unirate);
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`UniRateAPI: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data.rate) throw new Error('UniRateAPI: no data');
+  if (!data || !data.rate) throw new Error('UniRateAPI: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const cur = +(1 / data.rate).toFixed(2);
   const d = buildCloses(cur, cur + 15, cur - 15);
   return { ...d, source: 'UniRateAPI' };
@@ -107,8 +135,12 @@ async function tryUniRateApi() {
 
 async function tryCoinGecko() {
   const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=pax-gold&vs_currencies=usd');
+  if (!r.ok) {
+    const bodyText = await r.text();
+    throw new Error(`CoinGecko: HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+  }
   const data = await r.json();
-  if (!data || !data['pax-gold'] || !data['pax-gold'].usd) throw new Error('CoinGecko: no data');
+  if (!data || !data['pax-gold'] || !data['pax-gold'].usd) throw new Error('CoinGecko: response OK but no price field - ' + JSON.stringify(data).slice(0, 150));
   const cur = parseFloat(data['pax-gold'].usd);
   const d = buildCloses(cur, cur + 15, cur - 15);
   return { ...d, source: 'CoinGecko' };
@@ -127,7 +159,6 @@ function simulatedData() {
   return { closes, highs, lows, source: 'SIMULATED' };
 }
 
-// Tries each API in order, returns the first success. Logs which one worked.
 async function fetchGoldPrice() {
   const chain = [
     tryAlphaVantage, tryGoldApiCom, tryGoldApiIo, tryGoldPricez,
@@ -150,11 +181,16 @@ async function fetchLivePrice() {
   // Try gold-api.com first (unlimited, fast)
   try {
     const r = await fetch('https://api.gold-api.com/price/XAU');
-    const data = await r.json();
-    if (data && data.price) {
-      return { price: parseFloat(data.price), bid: data.bid, ask: data.ask, source: 'gold-api.com' };
+    if (!r.ok) {
+      const bodyText = await r.text();
+      console.log(`fetchLivePrice: gold-api.com HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+    } else {
+      const data = await r.json();
+      if (data && data.price) {
+        return { price: parseFloat(data.price), bid: data.bid, ask: data.ask, source: 'gold-api.com' };
+      }
+      console.log('fetchLivePrice: gold-api.com returned no price field. Response:', JSON.stringify(data).slice(0, 200));
     }
-    console.log('fetchLivePrice: gold-api.com returned no price field. Response:', JSON.stringify(data).slice(0, 200));
   } catch (err) {
     console.log('fetchLivePrice: gold-api.com failed -', err.message);
   }
@@ -162,17 +198,21 @@ async function fetchLivePrice() {
   // Fallback to GoldAPI.io
   try {
     const r = await fetch('https://www.goldapi.io/api/XAU/USD', { headers: { 'x-access-token': KEYS.goldapi } });
-    const data = await r.json();
-    if (data && data.price) {
-      return { price: data.price, bid: data.bid, ask: data.ask, source: 'GoldAPI.io' };
+    if (!r.ok) {
+      const bodyText = await r.text();
+      console.log(`fetchLivePrice: GoldAPI.io HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
+    } else {
+      const data = await r.json();
+      if (data && data.price) {
+        return { price: data.price, bid: data.bid, ask: data.ask, source: 'GoldAPI.io' };
+      }
+      console.log('fetchLivePrice: GoldAPI.io returned no price field. Response:', JSON.stringify(data).slice(0, 200));
     }
-    console.log('fetchLivePrice: GoldAPI.io returned no price field. Response:', JSON.stringify(data).slice(0, 200));
   } catch (err) {
     console.log('fetchLivePrice: GoldAPI.io failed -', err.message);
   }
 
   // Last resort: reuse the full 9-API chain that scheduled signals already use.
-  // This is slower (tries more sources) but far more reliable than only 2 attempts.
   console.log('fetchLivePrice: both fast sources failed, falling back to full 9-API chain...');
   try {
     const full = await fetchGoldPrice();
