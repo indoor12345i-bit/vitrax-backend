@@ -3,7 +3,6 @@
 // ════════════════════════════════════════════════════════════════════════
 const { Pool } = require('pg');
 
-// Railway auto-injects DATABASE_URL when you attach a Postgres service
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
@@ -14,15 +13,15 @@ async function initDB() {
     CREATE TABLE IF NOT EXISTS signals (
       id SERIAL PRIMARY KEY,
       created_at TIMESTAMP DEFAULT NOW(),
-      signal_type VARCHAR(20) NOT NULL,      -- 'SCHEDULED' or 'EMERGENCY'
-      label VARCHAR(10) NOT NULL,             -- 'BUY', 'SELL', 'WAIT'
+      signal_type VARCHAR(20) NOT NULL,
+      label VARCHAR(10) NOT NULL,
       direction VARCHAR(20),
       strength VARCHAR(20),
       score INTEGER,
       entry_price DECIMAL(10,2),
       take_profit DECIMAL(10,2),
       stop_loss DECIMAL(10,2),
-      current_sl DECIMAL(10,2),               -- moves with trailing stop
+      current_sl DECIMAL(10,2),
       atr DECIMAL(10,2),
       risk_reward DECIMAL(5,2),
       rsi DECIMAL(5,2),
@@ -38,7 +37,7 @@ async function initDB() {
       has_econ_event BOOLEAN,
       reasons TEXT,
       price_source VARCHAR(30),
-      trade_status VARCHAR(20) DEFAULT 'OPEN', -- OPEN, BREAKEVEN, TRAILING, CLOSED_WIN, CLOSED_LOSS, CLOSED_BE
+      trade_status VARCHAR(20) DEFAULT 'OPEN',
       exit_price DECIMAL(10,2),
       closed_at TIMESTAMP,
       pnl DECIMAL(10,2)
@@ -109,15 +108,15 @@ async function getOpenTrades() {
 async function updateTradeStatus(id, status, currentSL, exitPrice, pnl) {
   await pool.query(`
     UPDATE signals
-    SET trade_status = $2, current_sl = COALESCE($3, current_sl),
-        exit_price = $4, closed_at = CASE WHEN $2 LIKE 'CLOSED%' THEN NOW() ELSE closed_at END,
-        pnl = $5
+    SET trade_status = $2, current_sl = COALESCE($3::decimal, current_sl),
+        exit_price = $4::decimal, closed_at = CASE WHEN $2 LIKE 'CLOSED%' THEN NOW() ELSE closed_at END,
+        pnl = $5::decimal
     WHERE id = $1
   `, [id, status, currentSL, exitPrice, pnl]);
 }
 
 async function logPrice(price, source) {
-  await pool.query(`INSERT INTO price_log (price, source) VALUES ($1, $2)`, [price, source]);
+  await pool.query(`INSERT INTO price_log (price, source) VALUES ($1::decimal, $2)`, [price, source]);
 }
 
 async function getWinRate() {
@@ -141,7 +140,6 @@ async function getWinRate() {
 }
 
 async function getPriceHistory(hours = 720) {
-  // 720 hours = 30 days, matches the chart's previous 30-day window
   const result = await pool.query(`
     SELECT price, logged_at FROM price_log
     WHERE logged_at > NOW() - INTERVAL '1 hour' * $1
