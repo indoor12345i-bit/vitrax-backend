@@ -147,20 +147,44 @@ async function fetchGoldPrice() {
 }
 
 async function fetchLivePrice() {
+  // Try gold-api.com first (unlimited, fast)
   try {
     const r = await fetch('https://api.gold-api.com/price/XAU');
     const data = await r.json();
     if (data && data.price) {
       return { price: parseFloat(data.price), bid: data.bid, ask: data.ask, source: 'gold-api.com' };
     }
-  } catch (err) {}
+    console.log('fetchLivePrice: gold-api.com returned no price field. Response:', JSON.stringify(data).slice(0, 200));
+  } catch (err) {
+    console.log('fetchLivePrice: gold-api.com failed -', err.message);
+  }
+
+  // Fallback to GoldAPI.io
   try {
     const r = await fetch('https://www.goldapi.io/api/XAU/USD', { headers: { 'x-access-token': KEYS.goldapi } });
     const data = await r.json();
     if (data && data.price) {
       return { price: data.price, bid: data.bid, ask: data.ask, source: 'GoldAPI.io' };
     }
-  } catch (err) {}
+    console.log('fetchLivePrice: GoldAPI.io returned no price field. Response:', JSON.stringify(data).slice(0, 200));
+  } catch (err) {
+    console.log('fetchLivePrice: GoldAPI.io failed -', err.message);
+  }
+
+  // Last resort: reuse the full 9-API chain that scheduled signals already use.
+  // This is slower (tries more sources) but far more reliable than only 2 attempts.
+  console.log('fetchLivePrice: both fast sources failed, falling back to full 9-API chain...');
+  try {
+    const full = await fetchGoldPrice();
+    if (full && full.closes && full.closes.length > 0) {
+      const lastPrice = full.closes[full.closes.length - 1];
+      return { price: lastPrice, bid: lastPrice - 0.3, ask: lastPrice + 0.3, source: full.source + ' (via full chain)' };
+    }
+  } catch (err) {
+    console.log('fetchLivePrice: full chain fallback also failed -', err.message);
+  }
+
+  console.log('fetchLivePrice: ALL sources exhausted, returning null');
   return null;
 }
 
