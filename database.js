@@ -140,7 +140,17 @@ async function getWinRate() {
   };
 }
 
+async function getPriceHistory(hours = 720) {
+  // 720 hours = 30 days, matches the chart's previous 30-day window
+  const result = await pool.query(`
+    SELECT price, logged_at FROM price_log
+    WHERE logged_at > NOW() - INTERVAL '1 hour' * $1
+    ORDER BY logged_at ASC
+  `, [hours]);
+  return result.rows;
+}
+
 module.exports = {
   pool, initDB, saveSignal, getLatestSignal, getSignalHistory,
-  getOpenTrades, updateTradeStatus, logPrice, getWinRate
+  getOpenTrades, updateTradeStatus, logPrice, getWinRate, getPriceHistory
 };
