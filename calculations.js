@@ -143,27 +143,36 @@ function calcMTF(candles4h, candlesDaily) {
     var lowsD   = candlesDaily.map(function(c) { return c.low; });
     var priceD  = closesD[closesD.length - 1];
 
-    // EMA trend on daily
     var ema7d  = ema(closesD, 7);
     var ema14d = ema(closesD, 14);
     var e7v  = ema7d[ema7d.length - 1];
     var e14v = ema14d[ema14d.length - 1];
 
-    // RSI on daily
     var rsiDArr = rsi(closesD, 14);
     var rsiD = rsiDArr[rsiDArr.length - 1] || 50;
 
-    // Simple trend: is today's close higher or lower than 5 days ago?
+    // 5-day trend: is price lower than 5 days ago?
     var close5ago = closesD[closesD.length - 6] || closesD[0];
     var weekTrend = priceD > close5ago ? 1 : -1;
 
+    // 10-day trend: broader look at direction
+    var close10ago = closesD[closesD.length - 11] || closesD[0];
+    var tenDayTrend = priceD > close10ago ? 1 : -1;
+
     var votesD = 0;
+    // EMA alignment
     if (priceD > e7v && e7v > e14v) { votesD++; }
     else if (priceD < e7v && e7v < e14v) { votesD--; }
+    // RSI bias
     if (rsiD > 55) { votesD++; }
     else if (rsiD < 45) { votesD--; }
+    // 5-day price direction
     votesD += weekTrend;
+    // 10-day price direction (extra weight for sustained trends)
+    votesD += tenDayTrend;
 
+    // Lower threshold from 2 to 2 votes but with 4 possible votes now
+    // BEARISH needs 2 of 4 votes negative (50% agreement)
     if (votesD >= 2) {
       mtfScore++;
       mtfReasons.push('Daily trend: BULLISH');
@@ -424,16 +433,19 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   }
 
   // ── MTF (Multi-Timeframe Analysis) ───────────────────────────────────
-  // The most important filter: does the 4h and daily trend agree with
-  // the short-term signal direction? Trading with higher timeframes
-  // dramatically increases the chance of hitting take profit.
+  // Stronger filter than before — the daily trend now has veto power.
+  // If daily is bearish and we're generating a BUY, that's counter-trend
+  // trading which is the main cause of SL hits in a downtrending market.
   var mtfResult = calcMTF(candles4h, candlesDaily);
   var mtfScore = mtfResult.score;
   var mtfReasons = mtfResult.reasons;
 
-  // MTF contributes to the signal score — but with higher weight than
-  // most individual indicators because it represents an independent,
-  // broader market perspective that the short-term indicators can't see.
+  // Check daily trend specifically for the veto filter
+  var dailyBearish = mtfReasons.some(function(r) { return r.indexOf('Daily trend: BEARISH') !== -1; });
+  var dailyBullish = mtfReasons.some(function(r) { return r.indexOf('Daily trend: BULLISH') !== -1; });
+  var h4Bearish = mtfReasons.some(function(r) { return r.indexOf('4H trend: BEARISH') !== -1; });
+  var h4Bullish = mtfReasons.some(function(r) { return r.indexOf('4H trend: BULLISH') !== -1; });
+
   if (mtfScore >= 2) {
     score += 2;
     reasons.push('MTF confirmed: ' + mtfReasons.join(' | '));
@@ -448,6 +460,24 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     reasons.push('MTF confirmed bearish: ' + mtfReasons.join(' | '));
   } else {
     reasons.push('MTF neutral: ' + mtfReasons.join(' | '));
+  }
+
+  // ── Daily trend veto — prevent counter-trend signals ─────────────
+  // If BOTH 4h and daily are bearish, force any BUY to WAIT.
+  // This directly addresses the pattern of BUY signals hitting SL
+  // in a downtrending market — the most common cause of losses.
+  if (dailyBearish && h4Bearish) {
+    if (score > 0) {
+      score = -1; // force to WAIT territory
+      reasons.push('⛔ Counter-trend BUY suppressed — both 4H and daily bearish');
+    }
+  }
+  // If BOTH 4h and daily are bullish, force any SELL to WAIT
+  if (dailyBullish && h4Bullish) {
+    if (score < 0) {
+      score = 1; // force to WAIT territory
+      reasons.push('⛔ Counter-trend SELL suppressed — both 4H and daily bullish');
+    }
   }
 
   var label, dir, strength = '';
@@ -483,22 +513,25 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     if ((label==='BUY' && p > avwapValue) || (label==='SELL' && p < avwapValue)) adj+=5;
     else if ((label==='BUY' && p < avwapValue) || (label==='SELL' && p > avwapValue)) adj-=7;
   }
-  // MTF confidence adjustment — the most powerful confidence modifier
-  // Trading WITH both higher timeframes = big boost
-  // Trading AGAINST both higher timeframes = big penalty
+  // MTF confidence adjustment — strongest modifier in the system
   if (mtfScore >= 2) {
     if ((label==='BUY' && mtfScore > 0) || (label==='SELL' && mtfScore < 0)) adj += 10;
-    else adj -= 10;
+    else adj -= 15;
   } else if (mtfScore === 1) {
     if ((label==='BUY') || (label==='SELL' && mtfScore < 0)) adj += 5;
-    else adj -= 5;
+    else adj -= 8;
   } else if (mtfScore === -1) {
     if (label==='SELL') adj += 5;
-    else adj -= 5;
+    else adj -= 8;
   } else if (mtfScore <= -2) {
     if (label==='SELL') adj += 10;
-    else adj -= 10;
+    else adj -= 15;
   }
+
+  // Extra penalty if daily trend opposes signal direction
+  // This is the specific fix for the BUY-in-downtrend problem
+  if (dailyBearish && label === 'BUY') adj -= 12;
+  if (dailyBullish && label === 'SELL') adj -= 12;
   var confidence = Math.min(85, Math.max(30, Math.round(base+adj)));
 
   return {
