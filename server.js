@@ -19,8 +19,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-let lastNewsSentiment = null;
-let lastNewsTime = null;
+let lastEmergencyTime = null; // prevent spamming emergency signals
 
 // ════════════════════════════════════════════════════════════════════════
 // CORE SIGNAL GENERATION — runs on the 5x/day schedule
@@ -33,17 +32,7 @@ async function generateScheduledSignal() {
   try {
     const priceData = await priceFetcher.fetchGoldPrice();
 
-    // Refresh news sentiment every 2 hours
-    const now = Date.now();
-    if (!lastNewsTime || (now - lastNewsTime) > 2 * 60 * 60 * 1000) {
-      lastNewsSentiment = await priceFetcher.fetchNewsSentiment(calc.analyzeNewsSentiment);
-      lastNewsTime = now;
-    }
-
     // Fetch real OHLCV candles from MT5 for AVWAP + MTF calculation
-    // 1h candles (48 = 2 days) for AVWAP
-    // 4h candles (60 = 10 days) for medium-term MTF trend
-    // Daily candles (30 = 1 month) for long-term MTF trend
     const [candles, candles4h, candlesDaily] = await Promise.all([
       mt5.fetchMT5Candles('1h',    48).catch(() => null),
       mt5.fetchMT5Candles('4h',    60).catch(() => null),
@@ -54,7 +43,7 @@ async function generateScheduledSignal() {
     if (candles4h)    console.log(`[MTF] 4h candles: ${candles4h.length} (medium-term trend)`);
     if (candlesDaily) console.log(`[MTF] Daily candles: ${candlesDaily.length} (long-term trend)`);
 
-    const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles, candles4h, candlesDaily);
+    const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
     const saved = await db.saveSignal(sig, 'SCHEDULED', priceData.source);
 
     console.log(`Signal generated: ${sig.label} (${sig.strength}) at $${sig.entry} — confidence ${sig.confidence}%`);
@@ -83,11 +72,11 @@ async function checkEmergency() {
       mt5.fetchMT5Candles('1d', 30).catch(() => null),
     ]);
 
-    const emergency = calc.checkEmergencyTrigger(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles);
+    const emergency = calc.checkEmergencyTrigger(priceData.closes, priceData.highs, priceData.lows, candles);
 
     if (emergency) {
       console.log('\n🚨 EMERGENCY SIGNAL TRIGGERED:', emergency.signal, 'at $' + emergency.entry);
-      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles, candles4h, candlesDaily);
+      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
 
       // Build a fully consistent signal object - every field that depends on
       // label/direction gets explicitly overwritten together, not just label.
@@ -114,6 +103,58 @@ async function checkEmergency() {
     }
   } catch (err) {
     console.error('Emergency check failed:', err.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// HIGH CONFLUENCE CHECK — runs every 5 minutes
+// Detects when all indicator groups align strongly on same direction.
+// Completely independent of news. Fires an emergency signal when
+// 8+ out of ~10 indicators agree, representing ~85% confluence.
+// Cooldown: minimum 2 hours between high confluence signals to avoid spam.
+// ════════════════════════════════════════════════════════════════════════
+async function checkHighConfluenceSignal() {
+  try {
+    // Cooldown — don't fire more than once every 2 hours
+    if (lastEmergencyTime && (Date.now() - lastEmergencyTime) < 2 * 60 * 60 * 1000) return;
+
+    const priceData = await priceFetcher.fetchGoldPrice();
+    const [candles, candles4h, candlesDaily] = await Promise.all([
+      mt5.fetchMT5Candles('1h', 48).catch(() => null),
+      mt5.fetchMT5Candles('4h', 60).catch(() => null),
+      mt5.fetchMT5Candles('1d', 30).catch(() => null),
+    ]);
+
+    const hc = calc.checkHighConfluence(
+      priceData.closes, priceData.highs, priceData.lows,
+      candles, candles4h, candlesDaily
+    );
+
+    if (hc) {
+      console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + hc.entry);
+      console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
+
+      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
+      const sig = {
+        ...baseline,
+        label: hc.signal,
+        direction: hc.signal === 'BUY' ? 'LONG' : 'SHORT',
+        strength: 'HIGH CONFLUENCE',
+        score: hc.signal === 'BUY' ? 6 : -6,
+        entry: hc.entry,
+        takeProfit: hc.takeProfit,
+        takeProfit2: hc.takeProfit2,
+        stopLoss: hc.stopLoss,
+        confidence: hc.confidence,
+        reasons: hc.reasons,
+      };
+
+      const saved = await db.saveSignal(sig, 'EMERGENCY', priceData.source);
+      console.log('🔥 High confluence signal saved as #' + saved.id);
+      lastEmergencyTime = Date.now();
+    }
+  } catch (err) {
+    console.error('High confluence check failed:', err.message);
   }
 }
 
@@ -183,6 +224,10 @@ cron.schedule('36 21 * * *',generateScheduledSignal);  // 21:36
 
 // Emergency check every 10 minutes
 cron.schedule('*/10 * * * *', checkEmergency);
+
+// High confluence check every 5 minutes — purely technical, no news
+// Fires when 8+ out of ~10 indicators simultaneously agree on direction
+cron.schedule('*/5 * * * *', checkHighConfluenceSignal);
 
 // Live price + trade management every 30 seconds
 setInterval(checkLivePriceAndTrades, 30000);
@@ -283,7 +328,9 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`\n✅ Vitrax backend running on port ${PORT}`);
     console.log('Scheduled signals: 00:00, 02:24, 04:48, 07:12, 09:36, 12:00, 14:24, 16:48, 19:12, 21:36 daily (10x)');
-    console.log('Emergency checks: every 10 minutes');
+    console.log('Emergency checks: every 10 minutes (price spike detection)');
+    console.log('High confluence checks: every 5 minutes (indicator alignment)');
+    console.log('High confluence cooldown: 2 hours between signals');
     console.log('Live price + trade management: every 30 seconds');
   });
 }
