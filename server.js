@@ -64,7 +64,24 @@ async function generateScheduledSignal() {
     if (candlesDaily) console.log(`[MTF] Daily: ${candlesDaily.length} candles`);
 
     const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
-    const saved = await db.saveSignal(sig, 'SCHEDULED', priceData.source);
+
+    // Override entry price with real MT5 broker price — more accurate than
+    // website API price which can be 1-3 seconds delayed and from a different
+    // liquidity pool. Uses the same price subscribers see on their MT5 platform.
+    const mt5Price = await mt5.fetchMT5Price().catch(() => null);
+    if (mt5Price && mt5Price.price) {
+      const realEntry = mt5Price.price;
+      const levels = calc.calcDynamicLevels(realEntry, sig.label, sig.atr, sig.rsi);
+      sig.entry    = realEntry;
+      sig.takeProfit  = levels.tp1;
+      sig.takeProfit2 = levels.tp2;
+      sig.stopLoss    = levels.sl;
+      console.log(`[MT5] Entry price overridden: $${realEntry} (was $${priceData.closes[priceData.closes.length-1]})`);
+    } else {
+      console.log('[MT5] Live price unavailable — using API price for entry');
+    }
+
+    const saved = await db.saveSignal(sig, 'SCHEDULED', mt5Price ? 'PrimaCapital MT5 (direct)' : priceData.source);
 
     console.log(`Signal generated: ${sig.label} (${sig.strength}) at $${sig.entry} — confidence ${sig.confidence}%`);
     if (sig.avwap)    console.log(`[AVWAP] Daily AVWAP: $${sig.avwap} — price is ${sig.entry > sig.avwap ? 'ABOVE' : 'BELOW'} AVWAP`);
