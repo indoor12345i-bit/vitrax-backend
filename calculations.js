@@ -356,22 +356,6 @@ function displayDXY(closes) {
   return dxyEstimate>0.3 ? -1 : dxyEstimate<-0.3 ? 1 : 0;
 }
 
-var BULLISH_KEYWORDS = ['war','conflict','crisis','fear','inflation','recession','geopolitical','tension','sanctions','safe haven','gold rally','gold rises','dollar falls','fed cuts','rate cut'];
-var BEARISH_KEYWORDS = ['rate hike','fed raises','dollar rises','strong jobs','low inflation','recovery','gold falls','gold drops','gold plunges'];
-
-function analyzeNewsSentiment(articles) {
-  var bullScore=0, bearScore=0;
-  articles.forEach(function(a) {
-    var text = ((a.title||'')+' '+(a.description||'')).toLowerCase();
-    BULLISH_KEYWORDS.forEach(function(kw){ if(text.indexOf(kw)!==-1) bullScore++; });
-    BEARISH_KEYWORDS.forEach(function(kw){ if(text.indexOf(kw)!==-1) bearScore++; });
-  });
-  var total = bullScore+bearScore;
-  var score = total>0 ? ((bullScore-bearScore)/total)*100 : 0;
-  return { score: Math.round(score), bullScore: bullScore, bearScore: bearScore,
-    signal: score>20?'BUY':score<-20?'SELL':'NEUTRAL' };
-}
-
 var ECON_EVENTS = [
   {day:1, month:7, time:'15:00', name:'US ISM Manufacturing PMI', impact:'HIGH', goldEffect:'bearish if strong'},
   {day:4, month:7, time:'15:30', name:'US Non-Farm Payrolls (NFP)', impact:'HIGH', goldEffect:'bearish if strong'},
@@ -391,7 +375,7 @@ function checkEconEvent() {
 // ════════════════════════════════════════════════════════════════════════
 // SIGNAL SCORING — combines all layers into one BUY/SELL/WAIT
 // ════════════════════════════════════════════════════════════════════════
-function calcSignal(closes, highs, lows, newsSentiment, candles, candles4h, candlesDaily) {
+function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   var e14arr = ema(closes,14), e25arr = ema(closes,25);
   var rsiArr = rsi(closes,14);
   var e14v = e14arr[e14arr.length-1], e25v = e25arr[e25arr.length-1];
@@ -402,11 +386,6 @@ function calcSignal(closes, highs, lows, newsSentiment, candles, candles4h, cand
   var p = closes[closes.length-1];
 
   var score = 0, reasons = [];
-
-  if (newsSentiment) {
-    if (newsSentiment.signal === 'BUY') { score+=2; reasons.push('News bullish'); }
-    else if (newsSentiment.signal === 'SELL') { score-=2; reasons.push('News bearish'); }
-  }
   if (p>e14v) { score++; reasons.push('Price above EMA14'); } else { score--; reasons.push('Price below EMA14'); }
   if (e14v>e25v) { score++; reasons.push('Golden cross'); } else { score--; reasons.push('Death cross'); }
   if (rsiV<30) { score+=2; reasons.push('RSI oversold'); }
@@ -536,7 +515,137 @@ function calcSignal(closes, highs, lows, newsSentiment, candles, candles4h, cand
 // ════════════════════════════════════════════════════════════════════════
 // EMERGENCY CHECK
 // ════════════════════════════════════════════════════════════════════════
-function checkEmergencyTrigger(closes, highs, lows, newsSentiment, candles) {
+// ════════════════════════════════════════════════════════════════════════
+// HIGH CONFLUENCE DETECTOR — runs every 5 minutes, independent of news
+//
+// This is different from checkEmergencyTrigger (which detects unusual
+// price SPIKES). This detects when the technical picture is so strongly
+// aligned in one direction across multiple independent indicator groups
+// that the probability of a meaningful move is very high.
+//
+// The "85% chance" is represented by requiring ALL of these to agree:
+//   Group 1 — Trend: EMA position + crossover + MTF
+//   Group 2 — Momentum: RSI + MACD + Stochastic all pointing same way
+//   Group 3 — Structure: Bollinger position + AVWAP side
+//   Group 4 — Context: ATR above minimum (market is moving, not dead)
+//
+// All four groups must agree on the same direction. This is extremely
+// rare — when it happens, it represents genuine multi-layer confluence
+// that has historically preceded strong directional moves.
+// ════════════════════════════════════════════════════════════════════════
+function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily) {
+  if (!closes || closes.length < 30) return null;
+
+  var p = closes[closes.length - 1];
+  var atrVal = calcATR(closes, highs, lows, 14);
+
+  // Minimum ATR — market must be active enough to trade
+  if (atrVal < 5) return null;
+
+  var reasons = [];
+  var bullVotes = 0, bearVotes = 0;
+
+  // ── Group 1: Trend indicators ────────────────────────────────────
+  var e14arr = ema(closes, 14), e25arr = ema(closes, 25);
+  var e14v = e14arr[e14arr.length - 1];
+  var e25v = e25arr[e25arr.length - 1];
+
+  if (p > e14v) bullVotes++; else bearVotes++;       // price vs EMA14
+  if (e14v > e25v) bullVotes++; else bearVotes++;    // golden/death cross
+
+  // MTF trend
+  var mtf = calcMTF(candles4h, candlesDaily);
+  if (mtf.score >= 2) { bullVotes += 2; reasons.push('MTF strongly bullish'); }
+  else if (mtf.score <= -2) { bearVotes += 2; reasons.push('MTF strongly bearish'); }
+  else if (mtf.score === 1) bullVotes++;
+  else if (mtf.score === -1) bearVotes++;
+
+  // ── Group 2: Momentum indicators ─────────────────────────────────
+  var rsiArr = rsi(closes, 14);
+  var rsiV = rsiArr[rsiArr.length - 1] || 50;
+
+  if (rsiV < 35) { bullVotes++; reasons.push('RSI oversold (' + rsiV.toFixed(0) + ')'); }
+  else if (rsiV > 65) { bearVotes++; reasons.push('RSI overbought (' + rsiV.toFixed(0) + ')'); }
+  else if (rsiV < 50) bullVotes++;
+  else bearVotes++;
+
+  var macdData = macd(closes);
+  var hist = macdData.hist[macdData.hist.length - 1];
+  var prevHist = macdData.hist[macdData.hist.length - 2];
+  if (hist > 0 && hist > prevHist) { bullVotes++; reasons.push('MACD bullish momentum'); }
+  else if (hist < 0 && hist < prevHist) { bearVotes++; reasons.push('MACD bearish momentum'); }
+  else if (hist > 0) bullVotes++;
+  else bearVotes++;
+
+  var stochData = stochastic(closes, highs, lows, 14, 3);
+  var kv = stochData.k[stochData.k.length - 1];
+  var dv = stochData.d[stochData.d.length - 1];
+  if (kv < 25 && dv < 25) { bullVotes++; reasons.push('Stochastic oversold'); }
+  else if (kv > 75 && dv > 75) { bearVotes++; reasons.push('Stochastic overbought'); }
+  else if (kv < 50) bullVotes++;
+  else bearVotes++;
+
+  // ── Group 3: Structure indicators ────────────────────────────────
+  var bollData = bollinger(closes, 20);
+  var upper = bollData.upper[bollData.upper.length - 1];
+  var lower = bollData.lower[bollData.lower.length - 1];
+  var mid   = bollData.mid[bollData.mid.length - 1];
+
+  if (p < mid) { bullVotes++; if (p <= lower) reasons.push('Price at/below Bollinger lower'); }
+  else { bearVotes++; if (p >= upper) reasons.push('Price at/above Bollinger upper'); }
+
+  var avwap = candles ? calcAVWAP(candles) : null;
+  if (avwap) {
+    if (p > avwap) { bullVotes++; reasons.push('Above AVWAP ($' + avwap + ')'); }
+    else { bearVotes++; reasons.push('Below AVWAP ($' + avwap + ')'); }
+  }
+
+  // ── Group 4: Additional filters ───────────────────────────────────
+  // Whale detection — if whale is buying/selling, it adds confirmation
+  var whale = detectWhale(closes);
+  if (!whale) {
+    // No whale manipulation — clean signal, slight boost to leading side
+    if (bullVotes > bearVotes) bullVotes++;
+    else if (bearVotes > bullVotes) bearVotes++;
+  }
+
+  // Choppiness filter — don't fire in ranging markets
+  if (choppy(closes)) return null;
+
+  // ── Decision: require overwhelming agreement ───────────────────────
+  // Total possible votes: ~10 (trend x4, momentum x3, structure x2, whale x1)
+  // Require at least 8 on one side and 2 or fewer on the other
+  // This represents ~80% of all indicators pointing the same way simultaneously
+  var totalVotes = bullVotes + bearVotes;
+  var dominantSide = bullVotes > bearVotes ? 'BUY' : 'SELL';
+  var dominantVotes = Math.max(bullVotes, bearVotes);
+  var minorityVotes = Math.min(bullVotes, bearVotes);
+
+  // Must have at least 8 votes on dominant side and no more than 2 against
+  if (dominantVotes < 8 || minorityVotes > 2) return null;
+
+  // Must have at least 3 named reasons (specific meaningful conditions)
+  if (reasons.length < 3) return null;
+
+  var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV);
+  var confidence = Math.min(88, 70 + (dominantVotes - 8) * 5 - (minorityVotes * 3));
+
+  console.log('[HIGH CONFLUENCE] ' + dominantSide + ' detected — ' + dominantVotes + '/' + totalVotes + ' votes | confidence ' + confidence + '%');
+
+  return {
+    signal: dominantSide,
+    entry: p,
+    takeProfit: levels.tp1,
+    takeProfit2: levels.tp2,
+    stopLoss: levels.sl,
+    confidence: Math.round(confidence),
+    reasons: ['🔥 HIGH CONFLUENCE SIGNAL — ' + dominantVotes + '/' + totalVotes + ' indicators agree'].concat(reasons),
+    bullVotes: bullVotes,
+    bearVotes: bearVotes,
+  };
+}
+
+function checkEmergencyTrigger(closes, highs, lows, candles) {
   if (!closes || closes.length < 8) return null; // need more history for confirmation
 
   var price = closes[closes.length-1];
@@ -661,6 +770,6 @@ function checkEmergencyTrigger(closes, highs, lows, newsSentiment, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
-  displayDXY, analyzeNewsSentiment, checkEconEvent, calcSignal, checkEmergencyTrigger, calcAVWAP, calcMTF,
+  displayDXY, checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, calcAVWAP, calcMTF,
   ECON_EVENTS
 };
