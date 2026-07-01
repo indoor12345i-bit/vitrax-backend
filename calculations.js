@@ -65,7 +65,119 @@ function stochastic(closes, highs, lows, kPeriod, dPeriod) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// ANCHORED VWAP (AVWAP) — anchored to start of current UTC trading day
+// MULTI-TIMEFRAME ANALYSIS (MTF)
+//
+// The single biggest upgrade to the signal system. Instead of only
+// looking at the current short-term price action, MTF checks whether
+// the 4-hour and daily trends agree with the short-term signal direction.
+//
+// Why this matters: a BUY signal on a 1h chart means very little if the
+// 4h and daily charts are both in a clear downtrend. Trading counter-trend
+// is the most common cause of stop-loss hits. MTF filters these out.
+//
+// How it works:
+//   - 4h candles: is the medium-term trend (last 2 days) bullish or bearish?
+//   - Daily candles: is the longer-term trend (last 2 weeks) bullish or bearish?
+//   - Each timeframe votes: +1 for bullish, -1 for bearish, 0 for neutral
+//   - Total MTF score: -2 (both bearish) to +2 (both bullish)
+//
+// Interpretation:
+//   MTF score +2 → both timeframes bullish → strong confirmation for BUY
+//   MTF score +1 → mixed → weak confirmation, use with caution
+//   MTF score  0 → neutral → no MTF bias either way
+//   MTF score -1 → mixed → weak confirmation for SELL
+//   MTF score -2 → both timeframes bearish → strong confirmation for SELL
+//
+// A BUY signal with MTF score +2 gets full confidence boost.
+// A BUY signal with MTF score -2 gets a significant confidence penalty
+// because it's trading directly against both higher timeframes.
+// ════════════════════════════════════════════════════════════════════════
+function calcMTF(candles4h, candlesDaily) {
+  var mtfScore = 0;
+  var mtfReasons = [];
+
+  // ── 4-Hour Trend Analysis ─────────────────────────────────────────────
+  if (candles4h && candles4h.length >= 20) {
+    var closes4h = candles4h.map(function(c) { return c.close; });
+    var highs4h  = candles4h.map(function(c) { return c.high; });
+    var lows4h   = candles4h.map(function(c) { return c.low; });
+    var price4h  = closes4h[closes4h.length - 1];
+
+    // EMA trend on 4h
+    var ema104h = ema(closes4h, 10);
+    var ema204h = ema(closes4h, 20);
+    var e10v = ema104h[ema104h.length - 1];
+    var e20v = ema204h[ema204h.length - 1];
+
+    // RSI on 4h
+    var rsi4hArr = rsi(closes4h, 14);
+    var rsi4h = rsi4hArr[rsi4hArr.length - 1] || 50;
+
+    // MACD on 4h
+    var macd4h = macd(closes4h);
+    var hist4h = macd4h.hist[macd4h.hist.length - 1];
+
+    var votes4h = 0;
+    if (price4h > e10v && e10v > e20v) { votes4h++; }   // bullish trend
+    else if (price4h < e10v && e10v < e20v) { votes4h--; } // bearish trend
+    if (rsi4h > 55) { votes4h++; }
+    else if (rsi4h < 45) { votes4h--; }
+    if (hist4h > 0) { votes4h++; }
+    else if (hist4h < 0) { votes4h--; }
+
+    if (votes4h >= 2) {
+      mtfScore++;
+      mtfReasons.push('4H trend: BULLISH');
+    } else if (votes4h <= -2) {
+      mtfScore--;
+      mtfReasons.push('4H trend: BEARISH');
+    } else {
+      mtfReasons.push('4H trend: NEUTRAL');
+    }
+  }
+
+  // ── Daily Trend Analysis ──────────────────────────────────────────────
+  if (candlesDaily && candlesDaily.length >= 14) {
+    var closesD = candlesDaily.map(function(c) { return c.close; });
+    var highsD  = candlesDaily.map(function(c) { return c.high; });
+    var lowsD   = candlesDaily.map(function(c) { return c.low; });
+    var priceD  = closesD[closesD.length - 1];
+
+    // EMA trend on daily
+    var ema7d  = ema(closesD, 7);
+    var ema14d = ema(closesD, 14);
+    var e7v  = ema7d[ema7d.length - 1];
+    var e14v = ema14d[ema14d.length - 1];
+
+    // RSI on daily
+    var rsiDArr = rsi(closesD, 14);
+    var rsiD = rsiDArr[rsiDArr.length - 1] || 50;
+
+    // Simple trend: is today's close higher or lower than 5 days ago?
+    var close5ago = closesD[closesD.length - 6] || closesD[0];
+    var weekTrend = priceD > close5ago ? 1 : -1;
+
+    var votesD = 0;
+    if (priceD > e7v && e7v > e14v) { votesD++; }
+    else if (priceD < e7v && e7v < e14v) { votesD--; }
+    if (rsiD > 55) { votesD++; }
+    else if (rsiD < 45) { votesD--; }
+    votesD += weekTrend;
+
+    if (votesD >= 2) {
+      mtfScore++;
+      mtfReasons.push('Daily trend: BULLISH');
+    } else if (votesD <= -2) {
+      mtfScore--;
+      mtfReasons.push('Daily trend: BEARISH');
+    } else {
+      mtfReasons.push('Daily trend: NEUTRAL');
+    }
+  }
+
+  return { score: mtfScore, reasons: mtfReasons };
+}
+
 //
 // AVWAP = Σ(typical_price × volume) / Σ(volume)
 // where typical_price = (high + low + close) / 3
@@ -253,7 +365,7 @@ function checkEconEvent() {
 // ════════════════════════════════════════════════════════════════════════
 // SIGNAL SCORING — combines all layers into one BUY/SELL/WAIT
 // ════════════════════════════════════════════════════════════════════════
-function calcSignal(closes, highs, lows, newsSentiment, candles) {
+function calcSignal(closes, highs, lows, newsSentiment, candles, candles4h, candlesDaily) {
   var e14arr = ema(closes,14), e25arr = ema(closes,25);
   var rsiArr = rsi(closes,14);
   var e14v = e14arr[e14arr.length-1], e25v = e25arr[e25arr.length-1];
@@ -306,6 +418,33 @@ function calcSignal(closes, highs, lows, newsSentiment, candles) {
     }
   }
 
+  // ── MTF (Multi-Timeframe Analysis) ───────────────────────────────────
+  // The most important filter: does the 4h and daily trend agree with
+  // the short-term signal direction? Trading with higher timeframes
+  // dramatically increases the chance of hitting take profit.
+  var mtfResult = calcMTF(candles4h, candlesDaily);
+  var mtfScore = mtfResult.score;
+  var mtfReasons = mtfResult.reasons;
+
+  // MTF contributes to the signal score — but with higher weight than
+  // most individual indicators because it represents an independent,
+  // broader market perspective that the short-term indicators can't see.
+  if (mtfScore >= 2) {
+    score += 2;
+    reasons.push('MTF confirmed: ' + mtfReasons.join(' | '));
+  } else if (mtfScore === 1) {
+    score++;
+    reasons.push('MTF partial bullish: ' + mtfReasons.join(' | '));
+  } else if (mtfScore === -1) {
+    score--;
+    reasons.push('MTF partial bearish: ' + mtfReasons.join(' | '));
+  } else if (mtfScore <= -2) {
+    score -= 2;
+    reasons.push('MTF confirmed bearish: ' + mtfReasons.join(' | '));
+  } else {
+    reasons.push('MTF neutral: ' + mtfReasons.join(' | '));
+  }
+
   var label, dir, strength = '';
   if (score>=4) { label='BUY'; dir='LONG'; strength='STRONG'; }
   else if (score>=2) { label='BUY'; dir='LONG'; strength='MODERATE'; }
@@ -339,6 +478,22 @@ function calcSignal(closes, highs, lows, newsSentiment, candles) {
     if ((label==='BUY' && p > avwapValue) || (label==='SELL' && p < avwapValue)) adj+=5;
     else if ((label==='BUY' && p < avwapValue) || (label==='SELL' && p > avwapValue)) adj-=7;
   }
+  // MTF confidence adjustment — the most powerful confidence modifier
+  // Trading WITH both higher timeframes = big boost
+  // Trading AGAINST both higher timeframes = big penalty
+  if (mtfScore >= 2) {
+    if ((label==='BUY' && mtfScore > 0) || (label==='SELL' && mtfScore < 0)) adj += 10;
+    else adj -= 10;
+  } else if (mtfScore === 1) {
+    if ((label==='BUY') || (label==='SELL' && mtfScore < 0)) adj += 5;
+    else adj -= 5;
+  } else if (mtfScore === -1) {
+    if (label==='SELL') adj += 5;
+    else adj -= 5;
+  } else if (mtfScore <= -2) {
+    if (label==='SELL') adj += 10;
+    else adj -= 10;
+  }
   var confidence = Math.min(85, Math.max(30, Math.round(base+adj)));
 
   return {
@@ -347,7 +502,8 @@ function calcSignal(closes, highs, lows, newsSentiment, candles) {
     rsi: rsiV, ema14: e14v, ema25: e25v, confidence: confidence,
     fearGreed: fgScore, candlePattern: pattern.name, session: sessionInfo.session,
     whaleDetected: whaleDetected, stopHuntDetected: stopHunt, isChoppy: isChoppy,
-    hasEconEvent: hasEvent, dxyScore: dxyScore, avwap: avwapValue
+    hasEconEvent: hasEvent, dxyScore: dxyScore, avwap: avwapValue,
+    mtfScore: mtfScore, mtfReasons: mtfReasons
   };
 }
 
@@ -479,6 +635,6 @@ function checkEmergencyTrigger(closes, highs, lows, newsSentiment, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
-  displayDXY, analyzeNewsSentiment, checkEconEvent, calcSignal, checkEmergencyTrigger, calcAVWAP,
+  displayDXY, analyzeNewsSentiment, checkEconEvent, calcSignal, checkEmergencyTrigger, calcAVWAP, calcMTF,
   ECON_EVENTS
 };
