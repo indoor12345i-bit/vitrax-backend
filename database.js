@@ -21,6 +21,7 @@ async function initDB() {
       score INTEGER,
       entry_price DECIMAL(10,2),
       take_profit DECIMAL(10,2),
+      take_profit_2 DECIMAL(10,2),
       stop_loss DECIMAL(10,2),
       current_sl DECIMAL(10,2),               -- moves with trailing stop
       atr DECIMAL(10,2),
@@ -54,6 +55,16 @@ async function initDB() {
     CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_signals_status ON signals(trade_status);
   `);
+
+  // Add take_profit_2 column if it doesn't exist yet
+  // (ALTER TABLE IF NOT EXISTS column is not standard SQL, so we catch the error)
+  try {
+    await pool.query(`ALTER TABLE signals ADD COLUMN take_profit_2 DECIMAL(10,2)`);
+    console.log('✅ Added take_profit_2 column');
+  } catch (e) {
+    // Column already exists — ignore
+  }
+
   console.log('✅ Database tables ready');
 }
 
@@ -62,21 +73,21 @@ async function saveSignal(sig, type, priceSource) {
   const result = await pool.query(`
     INSERT INTO signals (
       signal_type, label, direction, strength, score,
-      entry_price, take_profit, stop_loss, current_sl, atr, risk_reward,
+      entry_price, take_profit, take_profit_2, stop_loss, current_sl, atr, risk_reward,
       rsi, ema14, ema25, confidence, fear_greed, candle_pattern, session,
       whale_detected, stop_hunt_detected, is_choppy, has_econ_event,
       reasons, price_source, trade_status
     ) VALUES (
       $1, $2, $3, $4, $5,
-      $6::decimal, $7::decimal, $8::decimal, $8::decimal, $9::decimal, $10::decimal,
-      $11::decimal, $12::decimal, $13::decimal, $14, $15, $16, $17,
-      $18, $19, $20, $21,
-      $22, $23, $24
+      $6::decimal, $7::decimal, $8::decimal, $9::decimal, $9::decimal, $10::decimal, $11::decimal,
+      $12::decimal, $13::decimal, $14::decimal, $15, $16, $17, $18,
+      $19, $20, $21, $22,
+      $23, $24, $25
     )
     RETURNING *
   `, [
     type, sig.label, sig.direction, sig.strength, sig.score,
-    sig.entry, sig.takeProfit, sig.stopLoss, sig.atr, sig.riskReward,
+    sig.entry, sig.takeProfit, sig.takeProfit2, sig.stopLoss, sig.atr, sig.riskReward,
     sig.rsi, sig.ema14, sig.ema25, sig.confidence, sig.fearGreed,
     sig.candlePattern, sig.session, sig.whaleDetected, sig.stopHuntDetected,
     sig.isChoppy, sig.hasEconEvent, sig.reasons.join(' · '), priceSource, tradeStatus
