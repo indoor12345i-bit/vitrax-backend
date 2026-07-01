@@ -40,21 +40,26 @@ async function generateScheduledSignal() {
       lastNewsTime = now;
     }
 
-    // Fetch real OHLCV candles from MT5 for AVWAP calculation
-    // Uses 1-hour candles, last 48 (2 full days) so daily AVWAP has enough data
-    // Gracefully degrades to null if MT5 connection isn't ready yet
-    const candles = await mt5.fetchMT5Candles('1h', 48).catch(() => null);
-    if (candles) {
-      console.log(`[AVWAP] Using ${candles.length} real MT5 candles for AVWAP calculation`);
-    } else {
-      console.log('[AVWAP] MT5 candles unavailable - signal will run without AVWAP');
-    }
+    // Fetch real OHLCV candles from MT5 for AVWAP + MTF calculation
+    // 1h candles (48 = 2 days) for AVWAP
+    // 4h candles (60 = 10 days) for medium-term MTF trend
+    // Daily candles (30 = 1 month) for long-term MTF trend
+    const [candles, candles4h, candlesDaily] = await Promise.all([
+      mt5.fetchMT5Candles('1h',    48).catch(() => null),
+      mt5.fetchMT5Candles('4h',    60).catch(() => null),
+      mt5.fetchMT5Candles('1d',    30).catch(() => null),
+    ]);
 
-    const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles);
+    if (candles)      console.log(`[MTF] 1h candles: ${candles.length} (AVWAP)`);
+    if (candles4h)    console.log(`[MTF] 4h candles: ${candles4h.length} (medium-term trend)`);
+    if (candlesDaily) console.log(`[MTF] Daily candles: ${candlesDaily.length} (long-term trend)`);
+
+    const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles, candles4h, candlesDaily);
     const saved = await db.saveSignal(sig, 'SCHEDULED', priceData.source);
 
     console.log(`Signal generated: ${sig.label} (${sig.strength}) at $${sig.entry} — confidence ${sig.confidence}%`);
-    if (sig.avwap) console.log(`[AVWAP] Daily AVWAP: $${sig.avwap} — price is ${sig.entry > sig.avwap ? 'ABOVE' : 'BELOW'} AVWAP`);
+    if (sig.avwap)    console.log(`[AVWAP] Daily AVWAP: $${sig.avwap} — price is ${sig.entry > sig.avwap ? 'ABOVE' : 'BELOW'} AVWAP`);
+    if (sig.mtfScore !== undefined) console.log(`[MTF] Score: ${sig.mtfScore} | ${sig.mtfReasons.join(' | ')}`);
     console.log(`Saved as signal #${saved.id}`);
 
     return saved;
@@ -71,14 +76,18 @@ async function checkEmergency() {
   try {
     const priceData = await priceFetcher.fetchGoldPrice();
 
-    // Fetch candles for AVWAP filtering - same as scheduled signals
-    const candles = await mt5.fetchMT5Candles('1h', 48).catch(() => null);
+    // Fetch candles for AVWAP + MTF filtering
+    const [candles, candles4h, candlesDaily] = await Promise.all([
+      mt5.fetchMT5Candles('1h', 48).catch(() => null),
+      mt5.fetchMT5Candles('4h', 60).catch(() => null),
+      mt5.fetchMT5Candles('1d', 30).catch(() => null),
+    ]);
 
     const emergency = calc.checkEmergencyTrigger(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles);
 
     if (emergency) {
       console.log('\n🚨 EMERGENCY SIGNAL TRIGGERED:', emergency.signal, 'at $' + emergency.entry);
-      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles);
+      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, lastNewsSentiment, candles, candles4h, candlesDaily);
 
       // Build a fully consistent signal object - every field that depends on
       // label/direction gets explicitly overwritten together, not just label.
@@ -160,14 +169,17 @@ async function checkLivePriceAndTrades() {
 // ════════════════════════════════════════════════════════════════════════
 // SCHEDULER — cron jobs
 // ════════════════════════════════════════════════════════════════════════
-// Scheduled signals: 7x per day, every 3.5 hours
-cron.schedule('0 0 * * *', generateScheduledSignal);   // 00:00
-cron.schedule('30 3 * * *', generateScheduledSignal);  // 03:30
-cron.schedule('0 7 * * *', generateScheduledSignal);   // 07:00
-cron.schedule('30 10 * * *', generateScheduledSignal); // 10:30
-cron.schedule('0 14 * * *', generateScheduledSignal);  // 14:00
-cron.schedule('30 17 * * *', generateScheduledSignal); // 17:30
-cron.schedule('0 21 * * *', generateScheduledSignal);  // 21:00
+// Scheduled signals: 10x per day, every 2.4 hours
+cron.schedule('0 0 * * *',  generateScheduledSignal);  // 00:00
+cron.schedule('24 2 * * *', generateScheduledSignal);  // 02:24
+cron.schedule('48 4 * * *', generateScheduledSignal);  // 04:48
+cron.schedule('12 7 * * *', generateScheduledSignal);  // 07:12
+cron.schedule('36 9 * * *', generateScheduledSignal);  // 09:36
+cron.schedule('0 12 * * *', generateScheduledSignal);  // 12:00
+cron.schedule('24 14 * * *',generateScheduledSignal);  // 14:24
+cron.schedule('48 16 * * *',generateScheduledSignal);  // 16:48
+cron.schedule('12 19 * * *',generateScheduledSignal);  // 19:12
+cron.schedule('36 21 * * *',generateScheduledSignal);  // 21:36
 
 // Emergency check every 10 minutes
 cron.schedule('*/10 * * * *', checkEmergency);
@@ -270,7 +282,7 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`\n✅ Vitrax backend running on port ${PORT}`);
-    console.log('Scheduled signals: 00:00, 03:30, 07:00, 10:30, 14:00, 17:30, 21:00 daily (7x)');
+    console.log('Scheduled signals: 00:00, 02:24, 04:48, 07:12, 09:36, 12:00, 14:24, 16:48, 19:12, 21:36 daily (10x)');
     console.log('Emergency checks: every 10 minutes');
     console.log('Live price + trade management: every 30 seconds');
   });
