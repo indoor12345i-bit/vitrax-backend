@@ -21,6 +21,31 @@ const PORT = process.env.PORT || 3000;
 
 let lastEmergencyTime = null; // prevent spamming emergency signals
 
+// Candle cache — reuse candles across checks instead of fetching every time
+// 1h candles refresh every 60 minutes, 4h every 4 hours, daily every 6 hours
+let candleCache = { candles1h: null, candles4h: null, candlesDaily: null };
+let candleCacheTime = { candles1h: 0, candles4h: 0, candlesDaily: 0 };
+const CANDLE_TTL = { candles1h: 60*60*1000, candles4h: 4*60*60*1000, candlesDaily: 6*60*60*1000 };
+
+async function getCachedCandles() {
+  const now = Date.now();
+  const [c1h, c4h, cd] = await Promise.all([
+    (now - candleCacheTime.candles1h > CANDLE_TTL.candles1h)
+      ? mt5.fetchMT5Candles('1h', 48).catch(() => null)
+      : Promise.resolve(candleCache.candles1h),
+    (now - candleCacheTime.candles4h > CANDLE_TTL.candles4h)
+      ? mt5.fetchMT5Candles('4h', 60).catch(() => null)
+      : Promise.resolve(candleCache.candles4h),
+    (now - candleCacheTime.candlesDaily > CANDLE_TTL.candlesDaily)
+      ? mt5.fetchMT5Candles('1d', 30).catch(() => null)
+      : Promise.resolve(candleCache.candlesDaily),
+  ]);
+  if (c1h) { candleCache.candles1h = c1h; candleCacheTime.candles1h = now; }
+  if (c4h) { candleCache.candles4h = c4h; candleCacheTime.candles4h = now; }
+  if (cd)  { candleCache.candlesDaily = cd; candleCacheTime.candlesDaily = now; }
+  return [candleCache.candles1h, candleCache.candles4h, candleCache.candlesDaily];
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // CORE SIGNAL GENERATION — runs on the 5x/day schedule
 // ════════════════════════════════════════════════════════════════════════
@@ -33,15 +58,10 @@ async function generateScheduledSignal() {
     const priceData = await priceFetcher.fetchGoldPrice();
 
     // Fetch real OHLCV candles from MT5 for AVWAP + MTF calculation
-    const [candles, candles4h, candlesDaily] = await Promise.all([
-      mt5.fetchMT5Candles('1h',    48).catch(() => null),
-      mt5.fetchMT5Candles('4h',    60).catch(() => null),
-      mt5.fetchMT5Candles('1d',    30).catch(() => null),
-    ]);
-
-    if (candles)      console.log(`[MTF] 1h candles: ${candles.length} (AVWAP)`);
-    if (candles4h)    console.log(`[MTF] 4h candles: ${candles4h.length} (medium-term trend)`);
-    if (candlesDaily) console.log(`[MTF] Daily candles: ${candlesDaily.length} (long-term trend)`);
+    const [candles, candles4h, candlesDaily] = await getCachedCandles();
+    if (candles)      console.log(`[MTF] 1h: ${candles.length} candles`);
+    if (candles4h)    console.log(`[MTF] 4h: ${candles4h.length} candles`);
+    if (candlesDaily) console.log(`[MTF] Daily: ${candlesDaily.length} candles`);
 
     const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
     const saved = await db.saveSignal(sig, 'SCHEDULED', priceData.source);
@@ -66,12 +86,7 @@ async function checkEmergency() {
     const priceData = await priceFetcher.fetchGoldPrice();
 
     // Fetch candles for AVWAP + MTF filtering
-    const [candles, candles4h, candlesDaily] = await Promise.all([
-      mt5.fetchMT5Candles('1h', 48).catch(() => null),
-      mt5.fetchMT5Candles('4h', 60).catch(() => null),
-      mt5.fetchMT5Candles('1d', 30).catch(() => null),
-    ]);
-
+    const [candles, candles4h, candlesDaily] = await getCachedCandles();
     const emergency = calc.checkEmergencyTrigger(priceData.closes, priceData.highs, priceData.lows, candles);
 
     if (emergency) {
@@ -119,12 +134,7 @@ async function checkHighConfluenceSignal() {
     if (lastEmergencyTime && (Date.now() - lastEmergencyTime) < 2 * 60 * 60 * 1000) return;
 
     const priceData = await priceFetcher.fetchGoldPrice();
-    const [candles, candles4h, candlesDaily] = await Promise.all([
-      mt5.fetchMT5Candles('1h', 48).catch(() => null),
-      mt5.fetchMT5Candles('4h', 60).catch(() => null),
-      mt5.fetchMT5Candles('1d', 30).catch(() => null),
-    ]);
-
+    const [candles, candles4h, candlesDaily] = await getCachedCandles();
     const hc = calc.checkHighConfluence(
       priceData.closes, priceData.highs, priceData.lows,
       candles, candles4h, candlesDaily
