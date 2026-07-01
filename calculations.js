@@ -239,17 +239,43 @@ function calcATR(closes, highs, lows, period) {
 }
 
 function calcDynamicLevels(cur, sig, atr, rsiV) {
-  if (sig === 'WAIT') return { tp: null, sl: null, atr: atr };
-  var slMultiplier = 0.5, tpMultiplier = 1.0;
-  if (rsiV < 25 && sig === 'BUY') { slMultiplier = 0.4; tpMultiplier = 1.2; }
-  else if (rsiV > 75 && sig === 'SELL') { slMultiplier = 0.4; tpMultiplier = 1.2; }
-  else if (rsiV > 45 && rsiV < 55) { slMultiplier = 0.6; tpMultiplier = 0.9; }
+  if (sig === 'WAIT') return { tp: null, tp1: null, tp2: null, sl: null, atr: atr };
+  var slMultiplier = 0.5;
+  if (rsiV < 25 && sig === 'BUY') { slMultiplier = 0.4; }
+  else if (rsiV > 75 && sig === 'SELL') { slMultiplier = 0.4; }
+  else if (rsiV > 45 && rsiV < 55) { slMultiplier = 0.6; }
+
+  // SL — unchanged, ATR-based
   var slDist = Math.max(Math.min(+(atr*slMultiplier).toFixed(2), 50), 5);
-  var tpDist = Math.max(Math.min(+(atr*tpMultiplier).toFixed(2), 80), 8);
-  var tp, sl;
-  if (sig === 'BUY') { tp = +(cur+tpDist).toFixed(2); sl = +(cur-slDist).toFixed(2); }
-  else { tp = +(cur-tpDist).toFixed(2); sl = +(cur+slDist).toFixed(2); }
-  return { tp: tp, sl: sl, atr: atr, slDist: slDist, tpDist: tpDist, rr: +(tpDist/slDist).toFixed(1) };
+
+  // TP1 — conservative target ($9 fixed)
+  var tp1Dist = 9;
+
+  // TP2 — extended target ($18 fixed)
+  var tp2Dist = 18;
+
+  var tp1, tp2, sl;
+  if (sig === 'BUY') {
+    tp1 = +(cur + tp1Dist).toFixed(2);
+    tp2 = +(cur + tp2Dist).toFixed(2);
+    sl  = +(cur - slDist).toFixed(2);
+  } else {
+    tp1 = +(cur - tp1Dist).toFixed(2);
+    tp2 = +(cur - tp2Dist).toFixed(2);
+    sl  = +(cur + slDist).toFixed(2);
+  }
+
+  return {
+    tp: tp1,       // backwards compat — tp still points to TP1
+    tp1: tp1,
+    tp2: tp2,
+    sl: sl,
+    atr: atr,
+    slDist: slDist,
+    tp1Dist: tp1Dist,
+    tp2Dist: tp2Dist,
+    rr: +(tp2Dist / slDist).toFixed(1) // RR based on TP2
+  };
 }
 
 function choppy(closes) {
@@ -498,7 +524,7 @@ function calcSignal(closes, highs, lows, newsSentiment, candles, candles4h, cand
 
   return {
     label: label, direction: dir, strength: strength, score: score, reasons: reasons,
-    entry: p, takeProfit: levels.tp, stopLoss: levels.sl, atr: atrValue, riskReward: levels.rr,
+    entry: p, takeProfit: levels.tp1, takeProfit2: levels.tp2, stopLoss: levels.sl, atr: atrValue, riskReward: levels.rr,
     rsi: rsiV, ema14: e14v, ema25: e25v, confidence: confidence,
     fearGreed: fgScore, candlePattern: pattern.name, session: sessionInfo.session,
     whaleDetected: whaleDetected, stopHuntDetected: stopHunt, isChoppy: isChoppy,
@@ -625,7 +651,7 @@ function checkEmergencyTrigger(closes, highs, lows, newsSentiment, candles) {
     }
 
     return {
-      signal: sig, entry: price, takeProfit: levels.tp, stopLoss: levels.sl,
+      signal: sig, entry: price, takeProfit: levels.tp1, takeProfit2: levels.tp2, stopLoss: levels.sl,
       confidence: Math.round(confidence), reasons: reasons
     };
   }
