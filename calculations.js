@@ -656,13 +656,13 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var minorityVotes = Math.min(bullVotes, bearVotes);
 
   // Must have at least 8 votes on dominant side and no more than 2 against
-  if (dominantVotes < 8 || minorityVotes > 2) return null;
+  if (dominantVotes < 7 || minorityVotes > 3) return null;
 
   // Must have at least 3 named reasons (specific meaningful conditions)
-  if (reasons.length < 3) return null;
+  if (reasons.length < 2) return null;
 
   var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV);
-  var confidence = Math.min(88, 70 + (dominantVotes - 8) * 5 - (minorityVotes * 3));
+  var confidence = Math.min(85, 65 + (dominantVotes - 7) * 5 - (minorityVotes * 3));
 
   console.log('[HIGH CONFLUENCE] ' + dominantSide + ' detected — ' + dominantVotes + '/' + totalVotes + ' votes | confidence ' + confidence + '%');
 
