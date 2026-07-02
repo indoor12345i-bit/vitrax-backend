@@ -154,7 +154,7 @@ async function getWinRate() {
   // unmanaged due to the updateTradeStatus bug (fixed same day). Including
   // them would misrepresent real performance. Only signals from this
   // cutoff forward count toward the genuine track record.
-  const TRACK_RECORD_START = process.env.TRACK_RECORD_START || '2026-06-30T18:00:00Z';
+  const TRACK_RECORD_START = process.env.TRACK_RECORD_START || '2026-07-02T10:39:00Z';
 
   const result = await pool.query(`
     SELECT
