@@ -278,25 +278,16 @@ async function checkLivePriceAndTrades() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// SCHEDULER — cron jobs
+// SCHEDULER — no fixed signal times
+// Signals fire only when the system detects a strong setup.
+// The high confluence detector checks every 5 minutes and fires
+// when enough indicators agree. 2-hour cooldown between signals.
 // ════════════════════════════════════════════════════════════════════════
-// Scheduled signals: 10x per day, every 2.4 hours
-cron.schedule('0 0 * * *',  generateScheduledSignal);  // 00:00
-cron.schedule('24 2 * * *', generateScheduledSignal);  // 02:24
-cron.schedule('48 4 * * *', generateScheduledSignal);  // 04:48
-cron.schedule('12 7 * * *', generateScheduledSignal);  // 07:12
-cron.schedule('36 9 * * *', generateScheduledSignal);  // 09:36
-cron.schedule('0 12 * * *', generateScheduledSignal);  // 12:00
-cron.schedule('24 14 * * *',generateScheduledSignal);  // 14:24
-cron.schedule('48 16 * * *',generateScheduledSignal);  // 16:48
-cron.schedule('12 19 * * *',generateScheduledSignal);  // 19:12
-cron.schedule('36 21 * * *',generateScheduledSignal);  // 21:36
 
-// Emergency check every 10 minutes
+// Emergency spike detection every 10 minutes
 cron.schedule('*/10 * * * *', checkEmergency);
 
-// High confluence check every 5 minutes — purely technical, no news
-// Fires when 8+ out of ~10 indicators simultaneously agree on direction
+// High confluence check every 5 minutes — the only signal generator
 cron.schedule('*/5 * * * *', checkHighConfluenceSignal);
 
 // Live price + trade management every 30 seconds
@@ -397,7 +388,10 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`\n✅ Vitrax backend running on port ${PORT}`);
-    console.log('Scheduled signals: 00:00, 02:24, 04:48, 07:12, 09:36, 12:00, 14:24, 16:48, 19:12, 21:36 daily (10x)');
+    console.log('Signal generation: condition-based (no fixed schedule)');
+    console.log('High confluence checks: every 5 minutes');
+    console.log('Emergency spike checks: every 10 minutes');
+    console.log('Cooldown between signals: 2 hours');
     console.log('Emergency checks: every 10 minutes (price spike detection)');
     console.log('High confluence checks: every 5 minutes (indicator alignment)');
     console.log('High confluence cooldown: 2 hours between signals');
