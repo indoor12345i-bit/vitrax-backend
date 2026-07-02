@@ -65,11 +65,47 @@ async function generateScheduledSignal() {
 
     const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
 
-    // Override entry price with real MT5 broker price — more accurate than
-    // website API price which can be 1-3 seconds delayed and from a different
-    // liquidity pool. Uses the same price subscribers see on their MT5 platform.
+    // ── QUALITY GATE ─────────────────────────────────────────────────────
+    // Scheduled signals only fire as BUY or SELL when conditions are
+    // genuinely good. If the gate fails, the signal is saved as WAIT
+    // and the system waits for the next scheduled check.
+    //
+    // Gate conditions for a real BUY or SELL to fire:
+    //   1. Score must be +3 or higher (strict — not just +2)
+    //   2. Confidence must be above 55%
+    //   3. Market must not be choppy
+    //   4. RSI must not be above 78 for BUY (overbought = bad entry)
+    //   5. RSI must not be below 22 for SELL (oversold = bad entry)
+    //   6. Daily trend veto is already handled inside calcSignal
+    //
+    // If gate fails → downgrade to WAIT with reason logged
+    if (sig.label !== 'WAIT') {
+      const rsiV = parseFloat(sig.rsi);
+      const gateReasons = [];
+
+      if (Math.abs(sig.score) < 3) gateReasons.push(`score ${sig.score} below threshold ±3`);
+      if (sig.confidence < 55)     gateReasons.push(`confidence ${sig.confidence}% below 55%`);
+      if (sig.isChoppy)            gateReasons.push('choppy market');
+      if (sig.label === 'BUY'  && rsiV > 78) gateReasons.push(`RSI ${rsiV} overbought for BUY`);
+      if (sig.label === 'SELL' && rsiV < 22) gateReasons.push(`RSI ${rsiV} oversold for SELL`);
+
+      if (gateReasons.length > 0) {
+        console.log(`[GATE] Signal downgraded to WAIT — ${gateReasons.join(', ')}`);
+        sig.label     = 'WAIT';
+        sig.direction = 'NEUTRAL';
+        sig.strength  = '';
+        sig.takeProfit  = null;
+        sig.takeProfit2 = null;
+        sig.stopLoss    = null;
+        sig.reasons.push('⏸️ Quality gate: ' + gateReasons.join(' | '));
+      } else {
+        console.log(`[GATE] Signal passed quality gate — ${sig.label} score:${sig.score} conf:${sig.confidence}%`);
+      }
+    }
+
+    // Override entry price with real MT5 broker price
     const mt5Price = await mt5.fetchMT5Price().catch(() => null);
-    if (mt5Price && mt5Price.price) {
+    if (mt5Price && mt5Price.price && sig.label !== 'WAIT') {
       const realEntry = mt5Price.price;
       const levels = calc.calcDynamicLevels(realEntry, sig.label, sig.atr, sig.rsi);
       sig.entry    = realEntry;
@@ -77,7 +113,7 @@ async function generateScheduledSignal() {
       sig.takeProfit2 = levels.tp2;
       sig.stopLoss    = levels.sl;
       console.log(`[MT5] Entry price overridden: $${realEntry} (was $${priceData.closes[priceData.closes.length-1]})`);
-    } else {
+    } else if (sig.label !== 'WAIT') {
       console.log('[MT5] Live price unavailable — using API price for entry');
     }
 
