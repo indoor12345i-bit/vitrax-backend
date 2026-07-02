@@ -463,20 +463,21 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   }
 
   // ── Daily trend veto — prevent counter-trend signals ─────────────
-  // If BOTH 4h and daily are bearish, force any BUY to WAIT.
-  // This directly addresses the pattern of BUY signals hitting SL
-  // in a downtrending market — the most common cause of losses.
-  if (dailyBearish && h4Bearish) {
+  // If the DAILY trend is bearish, suppress any BUY signal to WAIT.
+  // The daily trend is the most important timeframe — trading against
+  // it is the primary cause of stop loss hits in downtrending markets.
+  // We don't require 4H to also be bearish — daily alone is enough.
+  if (dailyBearish) {
     if (score > 0) {
       score = -1; // force to WAIT territory
-      reasons.push('⛔ Counter-trend BUY suppressed — both 4H and daily bearish');
+      reasons.push('⛔ BUY suppressed — daily trend is BEARISH. Wait for trend to turn bullish.');
     }
   }
-  // If BOTH 4h and daily are bullish, force any SELL to WAIT
-  if (dailyBullish && h4Bullish) {
+  // If daily is bullish, suppress SELL signals
+  if (dailyBullish) {
     if (score < 0) {
       score = 1; // force to WAIT territory
-      reasons.push('⛔ Counter-trend SELL suppressed — both 4H and daily bullish');
+      reasons.push('⛔ SELL suppressed — daily trend is BULLISH. Wait for trend to turn bearish.');
     }
   }
 
