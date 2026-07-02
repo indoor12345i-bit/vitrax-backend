@@ -153,6 +153,36 @@ async function checkEmergency() {
     const mt5P   = await mt5.fetchMT5Price().catch(() => null);
     const curP   = mt5P && mt5P.price ? mt5P.price : closes[closes.length-1];
     const liveC  = [...closes.slice(0,-1), curP];
+
+    // ── Candle spike detector — catches NFP/Fed/news moves immediately ──
+    // Fires when a single candle moves 2.5x ATR — bypasses daily veto
+    // because a spike of that size IS the new trend direction
+    if (lastEmergencyTime === null || (Date.now() - lastEmergencyTime) > 30 * 60 * 1000) {
+      const spike = calc.checkCandleSpike(candles, curP);
+      if (spike) {
+        console.log('\n🚀 CANDLE SPIKE SIGNAL:', spike.signal, 'at $' + curP, '(' + spike.atrMultiple + 'x ATR)');
+        const baseline = calc.calcSignal(liveC, highs, lows, candles, candles4h, candlesDaily);
+        const sig = {
+          ...baseline,
+          label:       spike.signal,
+          direction:   spike.signal === 'BUY' ? 'LONG' : 'SHORT',
+          strength:    'SPIKE',
+          score:       spike.signal === 'BUY' ? 6 : -6,
+          entry:       curP,
+          takeProfit:  spike.takeProfit,
+          takeProfit2: spike.takeProfit2,
+          stopLoss:    spike.stopLoss,
+          confidence:  spike.confidence,
+          reasons:     spike.reasons,
+        };
+        const saved = await db.saveSignal(sig, 'EMERGENCY', 'PrimaCapital MT5 (direct)');
+        console.log('🚀 Spike signal saved as #' + saved.id);
+        await telegram.sendSignalAlert(sig);
+        lastEmergencyTime = Date.now();
+        return; // skip regular emergency check if spike already fired
+      }
+    }
+
     const emergency = calc.checkEmergencyTrigger(liveC, highs, lows, candles);
 
     if (emergency) {
