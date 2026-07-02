@@ -229,7 +229,7 @@ async function checkHighConfluenceSignal() {
       console.log(`[VOTES] ${dominant} ${domVotes}/7 needed (${minVotes} against) — need ${Math.max(0, 7-domVotes)} more votes`);
     }
 
-    if (hc) {
+    if (hc && !hc.belowThreshold && hc.signal) {
       console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
       console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
 
