@@ -185,12 +185,12 @@ async function checkEmergency() {
 // Detects when all indicator groups align strongly on same direction.
 // Completely independent of news. Fires an emergency signal when
 // 8+ out of ~10 indicators agree, representing ~85% confluence.
-// Cooldown: minimum 2 hours between high confluence signals to avoid spam.
+// Cooldown: minimum 30 minutes between high confluence signals.
 // ════════════════════════════════════════════════════════════════════════
 async function checkHighConfluenceSignal() {
   try {
     // Cooldown — don't fire more than once every 2 hours
-    if (lastEmergencyTime && (Date.now() - lastEmergencyTime) < 2 * 60 * 60 * 1000) return;
+    if (lastEmergencyTime && (Date.now() - lastEmergencyTime) < 30 * 60 * 1000) return;
 
     const priceData = await priceFetcher.fetchGoldPrice();
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
@@ -281,7 +281,7 @@ async function checkLivePriceAndTrades() {
 // SCHEDULER — no fixed signal times
 // Signals fire only when the system detects a strong setup.
 // The high confluence detector checks every 5 minutes and fires
-// when enough indicators agree. 2-hour cooldown between signals.
+// when enough indicators agree. 30-minute cooldown between signals.
 // ════════════════════════════════════════════════════════════════════════
 
 // Emergency spike detection every 10 minutes
@@ -387,10 +387,10 @@ async function start() {
     console.log('Signal generation: condition-based (no fixed schedule)');
     console.log('High confluence checks: every 5 minutes');
     console.log('Emergency spike checks: every 10 minutes');
-    console.log('Cooldown between signals: 2 hours');
+    console.log('Cooldown between signals: 30 minutes');
     console.log('Emergency checks: every 10 minutes (price spike detection)');
     console.log('High confluence checks: every 5 minutes (indicator alignment)');
-    console.log('High confluence cooldown: 2 hours between signals');
+    console.log('High confluence cooldown: 30 minutes between signals');
     console.log('Live price + trade management: every 30 seconds');
   });
 }
