@@ -221,6 +221,14 @@ async function checkHighConfluenceSignal() {
     console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${new Date().toISOString().substr(11,8)} UTC`);
     const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily);
 
+    // Show vote counts so we can see how close we are to a signal
+    if (hc && hc.belowThreshold) {
+      var dominant = hc.dominantSide || (hc.bullVotes > hc.bearVotes ? 'BUY' : 'SELL');
+      var domVotes = Math.max(hc.bullVotes, hc.bearVotes);
+      var minVotes = Math.min(hc.bullVotes, hc.bearVotes);
+      console.log(`[VOTES] ${dominant} ${domVotes}/7 needed (${minVotes} against) — need ${Math.max(0, 7-domVotes)} more votes`);
+    }
+
     if (hc) {
       console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
       console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
