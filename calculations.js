@@ -485,8 +485,8 @@ function calcDynamicLevels(cur, sig, atr, rsiV) {
   // SL — unchanged, ATR-based
   var slDist = Math.max(Math.min(+(atr*slMultiplier).toFixed(2), 50), 5);
 
-  // TP1 — conservative target ($9 fixed)
-  var tp1Dist = 9;
+  // TP1 — conservative target ($7 fixed)
+  var tp1Dist = 7;
 
   // TP2 — extended target ($18 fixed)
   var tp2Dist = 18;
