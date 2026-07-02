@@ -218,6 +218,7 @@ async function checkHighConfluenceSignal() {
     const currentPrice = mt5Price && mt5Price.price ? mt5Price.price : closes[closes.length - 1];
     const liveCloses = [...closes.slice(0, -1), currentPrice];
 
+    console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${new Date().toISOString().substr(11,8)} UTC`);
     const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily);
 
     if (hc) {
