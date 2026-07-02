@@ -26,7 +26,7 @@ let lastEmergencyTime = null; // prevent spamming emergency signals
 // 1h candles refresh every 60 minutes, 4h every 4 hours, daily every 6 hours
 let candleCache = { candles1h: null, candles4h: null, candlesDaily: null };
 let candleCacheTime = { candles1h: 0, candles4h: 0, candlesDaily: 0 };
-const CANDLE_TTL = { candles1h: 60*60*1000, candles4h: 4*60*60*1000, candlesDaily: 6*60*60*1000 };
+const CANDLE_TTL = { candles1h: 15*60*1000, candles4h: 4*60*60*1000, candlesDaily: 6*60*60*1000 };
 
 async function getCachedCandles() {
   const now = Date.now();
