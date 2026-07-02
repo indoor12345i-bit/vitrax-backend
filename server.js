@@ -310,8 +310,8 @@ async function checkLivePriceAndTrades() {
 // Emergency spike detection every 10 minutes
 cron.schedule('*/10 * * * *', checkEmergency);
 
-// High confluence check every 5 minutes — the only signal generator
-cron.schedule('*/5 * * * *', checkHighConfluenceSignal);
+// High confluence check every 1 minute — the only signal generator
+cron.schedule('* * * * *', checkHighConfluenceSignal);
 
 // Live price + trade management every 30 seconds
 setInterval(checkLivePriceAndTrades, 30000);
@@ -408,7 +408,7 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`\n✅ Vitrax backend running on port ${PORT}`);
     console.log('Signal generation: condition-based (no fixed schedule)');
-    console.log('High confluence checks: every 5 minutes');
+    console.log('High confluence checks: every 1 minute');
     console.log('Emergency spike checks: every 10 minutes');
     console.log('Cooldown between signals: 30 minutes');
     console.log('Emergency checks: every 10 minutes (price spike detection)');
