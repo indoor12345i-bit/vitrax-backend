@@ -1010,6 +1010,73 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   };
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// CANDLE SPIKE DETECTOR
+//
+// Detects when a single candle moves more than 2x ATR — indicating a
+// major event like NFP, Fed decision, or geopolitical news.
+// Unlike the regular emergency trigger which compares close-to-close,
+// this looks at the actual candle BODY (open to close) and RANGE
+// (high to low) to catch intra-candle spikes immediately.
+//
+// Bypasses the daily trend veto — if gold moves $70 in one candle,
+// that IS the new trend regardless of what yesterday's candles said.
+//
+// Fires with direction of the spike:
+//   Big green candle (close > open by 2x ATR) → BUY momentum
+//   Big red candle   (open > close by 2x ATR) → SELL momentum
+// ════════════════════════════════════════════════════════════════════════
+function checkCandleSpike(candles, currentPrice) {
+  if (!candles || candles.length < 5) return null;
+
+  // Get the most recent completed candle and the one before it
+  var latestCandle = candles[candles.length - 1];
+  var prevCandle   = candles[candles.length - 2];
+
+  var closes = candles.map(function(c) { return c.close; });
+  var highs   = candles.map(function(c) { return c.high; });
+  var lows    = candles.map(function(c) { return c.low; });
+  var atr     = calcATR(closes, highs, lows, 14);
+
+  if (!atr || atr <= 0) return null;
+
+  // Measure the candle body (open to close distance)
+  // Use previous close as the open proxy since MT5 candles may not have open
+  var candleBody  = Math.abs(latestCandle.close - prevCandle.close);
+  var candleRange = latestCandle.high - latestCandle.low;
+  var isBullish   = latestCandle.close > prevCandle.close;
+
+  // Threshold: candle body must be 2.5x ATR (exceptional, not just large)
+  var spikeThreshold = atr * 2.5;
+
+  if (candleBody < spikeThreshold && candleRange < spikeThreshold * 1.2) {
+    return null; // not a spike
+  }
+
+  var direction = isBullish ? 'BUY' : 'SELL';
+  var moveSize  = candleBody.toFixed(2);
+  var atrMultiple = (candleBody / atr).toFixed(1);
+
+  console.log(`[SPIKE] Detected ${direction} spike — $${moveSize} move (${atrMultiple}x ATR)`);
+
+  var levels = calcDynamicLevels(currentPrice, direction, atr, 50);
+
+  return {
+    signal:      direction,
+    entry:       currentPrice,
+    takeProfit:  levels.tp1,
+    takeProfit2: levels.tp2,
+    stopLoss:    levels.sl,
+    confidence:  Math.min(82, 60 + Math.floor(parseFloat(atrMultiple) * 5)),
+    reasons: [
+      '🚀 CANDLE SPIKE — $' + moveSize + ' move (' + atrMultiple + 'x ATR)',
+      'Major market event detected — bypassing daily trend filter',
+      direction === 'BUY' ? 'Strong bullish momentum candle' : 'Strong bearish momentum candle',
+    ],
+    atrMultiple: parseFloat(atrMultiple),
+  };
+}
+
 function checkEmergencyTrigger(closes, highs, lows, candles) {
   if (!closes || closes.length < 8) return null; // need more history for confirmation
 
@@ -1135,6 +1202,6 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
-  displayDXY, checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
+  displayDXY, checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
   ECON_EVENTS
 };
