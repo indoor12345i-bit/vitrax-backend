@@ -11,6 +11,7 @@ const calc = require('./calculations');
 const priceFetcher = require('./priceFetcher');
 const mt5 = require('./mt5PriceFeed');
 const db = require('./database');
+const telegram = require('./telegram');
 const tradeManager = require('./tradeManager');
 
 const app = express();
@@ -124,6 +125,11 @@ async function generateScheduledSignal() {
     if (sig.mtfScore !== undefined) console.log(`[MTF] Score: ${sig.mtfScore} | ${sig.mtfReasons.join(' | ')}`);
     console.log(`Saved as signal #${saved.id}`);
 
+    // Send Telegram alert — only for real BUY/SELL signals, never for WAIT
+    if (sig.label !== 'WAIT') {
+      await telegram.sendSignalAlert(sig);
+    }
+
     return saved;
   } catch (err) {
     console.error('Signal generation failed:', err.message);
@@ -214,6 +220,7 @@ async function checkHighConfluenceSignal() {
 
       const saved = await db.saveSignal(sig, 'EMERGENCY', priceData.source);
       console.log('🔥 High confluence signal saved as #' + saved.id);
+      await telegram.sendSignalAlert(sig);
       lastEmergencyTime = Date.now();
     }
   } catch (err) {
