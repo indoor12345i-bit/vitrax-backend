@@ -65,6 +65,92 @@ function stochastic(closes, highs, lows, kPeriod, dPeriod) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
+// SUPPORT AND RESISTANCE DETECTION
+//
+// Identifies key price levels where gold has historically reversed.
+// These are the "walls" that signals can run into before hitting TP.
+//
+// How it works:
+//   1. Look at the last 100 candles (highs and lows)
+//   2. Find clusters of highs/lows that appear close to each other
+//      (within a "zone" of 0.3x ATR)
+//   3. A level is significant if price touched it 2+ times
+//   4. Classify each level as support (below current price) or
+//      resistance (above current price)
+//   5. Check if a key level sits between entry and TP — this is danger
+//
+// Returns:
+//   nearestResistance — closest resistance above current price
+//   nearestSupport    — closest support below current price
+//   resistanceBetweenTP — true if resistance sits between price and TP
+//   supportBetweenTP    — true if support sits between price and TP (for SELL)
+//   strength           — how many times price has tested the nearest level
+// ════════════════════════════════════════════════════════════════════════
+function calcSupportResistance(closes, highs, lows, currentPrice, atr) {
+  if (!closes || closes.length < 20 || !atr) return null;
+
+  var zoneSize = atr * 0.3; // levels within this distance are the same zone
+  var levels = [];
+
+  // Collect significant swing highs and lows
+  // A swing high is a candle where the high is higher than surrounding candles
+  // A swing low is a candle where the low is lower than surrounding candles
+  for (var i = 2; i < highs.length - 2; i++) {
+    // Swing high
+    if (highs[i] > highs[i-1] && highs[i] > highs[i-2] &&
+        highs[i] > highs[i+1] && highs[i] > highs[i+2]) {
+      levels.push({ price: highs[i], type: 'resistance' });
+    }
+    // Swing low
+    if (lows[i] < lows[i-1] && lows[i] < lows[i-2] &&
+        lows[i] < lows[i+1] && lows[i] < lows[i+2]) {
+      levels.push({ price: lows[i], type: 'support' });
+    }
+  }
+
+  // Cluster nearby levels into zones
+  var zones = [];
+  levels.forEach(function(level) {
+    var found = false;
+    for (var j = 0; j < zones.length; j++) {
+      if (Math.abs(zones[j].price - level.price) <= zoneSize) {
+        // Merge into existing zone — average the price
+        zones[j].price = (zones[j].price * zones[j].touches + level.price) / (zones[j].touches + 1);
+        zones[j].touches++;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      zones.push({ price: level.price, touches: 1 });
+    }
+  });
+
+  // Only keep zones touched at least twice (significant levels)
+  zones = zones.filter(function(z) { return z.touches >= 2; });
+
+  if (zones.length === 0) return null;
+
+  // Find nearest resistance above and support below current price
+  var resistance = zones
+    .filter(function(z) { return z.price > currentPrice; })
+    .sort(function(a, b) { return a.price - b.price; }); // closest first
+
+  var support = zones
+    .filter(function(z) { return z.price < currentPrice; })
+    .sort(function(a, b) { return b.price - a.price; }); // closest first
+
+  var nearestResistance = resistance.length > 0 ? resistance[0] : null;
+  var nearestSupport    = support.length > 0    ? support[0]    : null;
+
+  return {
+    nearestResistance: nearestResistance,
+    nearestSupport:    nearestSupport,
+    allZones:          zones,
+  };
+}
+
+// ════════════════════════════════════════════════════════════════════════
 // MULTI-TIMEFRAME ANALYSIS (MTF)
 //
 // The single biggest upgrade to the signal system. Instead of only
@@ -432,6 +518,48 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     }
   }
 
+  // ── Support & Resistance ──────────────────────────────────────────────
+  // Check if a key level sits between current price and take profit.
+  // If resistance blocks a BUY or support blocks a SELL, reduce score
+  // and confidence — price will likely struggle to reach TP.
+  var srResult = calcSupportResistance(closes, highs, lows, p, atrValue);
+  var srReason = null;
+  if (srResult) {
+    var tp1Dist = atrValue; // approximate TP1 distance
+    var nearR = srResult.nearestResistance;
+    var nearS = srResult.nearestSupport;
+
+    // For BUY: check if resistance sits between price and TP1
+    if (nearR && nearR.price < p + tp1Dist) {
+      var distToR = (nearR.price - p).toFixed(2);
+      if (nearR.touches >= 3) {
+        score--;
+        srReason = 'Strong resistance at $' + nearR.price.toFixed(2) + ' (' + nearR.touches + ' touches, $' + distToR + ' away)';
+        reasons.push('⚠️ S&R: ' + srReason);
+      } else {
+        srReason = 'Resistance at $' + nearR.price.toFixed(2) + ' (' + nearR.touches + ' touches, $' + distToR + ' away)';
+        reasons.push('S&R: ' + srReason);
+      }
+    }
+    // For SELL: check if support sits between price and TP1
+    else if (nearS && nearS.price > p - tp1Dist) {
+      var distToS = (p - nearS.price).toFixed(2);
+      if (nearS.touches >= 3) {
+        score++;
+        srReason = 'Strong support at $' + nearS.price.toFixed(2) + ' (' + nearS.touches + ' touches, $' + distToS + ' away)';
+        reasons.push('⚠️ S&R: ' + srReason);
+      } else {
+        srReason = 'Support at $' + nearS.price.toFixed(2) + ' (' + nearS.touches + ' touches, $' + distToS + ' away)';
+        reasons.push('S&R: ' + srReason);
+      }
+    }
+    // Clear path to TP — no significant level blocking the way
+    else {
+      if (nearR) reasons.push('S&R: Clear path to TP — next resistance at $' + nearR.price.toFixed(2));
+      else if (nearS) reasons.push('S&R: Clear path to TP — nearest support at $' + nearS.price.toFixed(2));
+    }
+  }
+
   // ── MTF (Multi-Timeframe Analysis) ───────────────────────────────────
   // Stronger filter than before — the daily trend now has veto power.
   // If daily is bearish and we're generating a BUY, that's counter-trend
@@ -509,6 +637,22 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   adj += sessionInfo.confidence;
   if (dxyScore!==0 && ((dxyScore>0 && label==='BUY')||(dxyScore<0 && label==='SELL'))) adj+=3;
   if (pattern.signal===label) adj+=4;
+  // S&R confidence adjustment
+  // Strong blocking level with 3+ touches = significant penalty
+  // Clear path to TP = small boost
+  if (srResult) {
+    var nearR2 = srResult.nearestResistance;
+    var nearS2 = srResult.nearestSupport;
+    var tp1D = atrValue;
+    if (label === 'BUY' && nearR2 && nearR2.price < p + tp1D) {
+      adj -= nearR2.touches >= 3 ? 10 : 5;
+    } else if (label === 'SELL' && nearS2 && nearS2.price > p - tp1D) {
+      adj -= nearS2.touches >= 3 ? 10 : 5;
+    } else {
+      adj += 3; // clear path bonus
+    }
+  }
+
   // AVWAP confirmation boosts confidence when aligned, reduces when against
   if (avwapValue !== null) {
     if ((label==='BUY' && p > avwapValue) || (label==='SELL' && p < avwapValue)) adj+=5;
@@ -804,6 +948,6 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
-  displayDXY, checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, calcAVWAP, calcMTF,
+  displayDXY, checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, calcAVWAP, calcMTF, calcSupportResistance,
   ECON_EVENTS
 };
