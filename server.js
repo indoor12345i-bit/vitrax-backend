@@ -146,11 +146,18 @@ async function checkEmergency() {
 
     // Fetch candles for AVWAP + MTF filtering
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
-    const emergency = calc.checkEmergencyTrigger(priceData.closes, priceData.highs, priceData.lows, candles);
+    if (!candles || candles.length < 20) return;
+    const closes = candles.map(c => c.close);
+    const highs  = candles.map(c => c.high);
+    const lows   = candles.map(c => c.low);
+    const mt5P   = await mt5.fetchMT5Price().catch(() => null);
+    const curP   = mt5P && mt5P.price ? mt5P.price : closes[closes.length-1];
+    const liveC  = [...closes.slice(0,-1), curP];
+    const emergency = calc.checkEmergencyTrigger(liveC, highs, lows, candles);
 
     if (emergency) {
-      console.log('\n🚨 EMERGENCY SIGNAL TRIGGERED:', emergency.signal, 'at $' + emergency.entry);
-      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
+      console.log('\n🚨 EMERGENCY SIGNAL TRIGGERED:', emergency.signal, 'at $' + curP);
+      const baseline = calc.calcSignal(liveC, highs, lows, candles, candles4h, candlesDaily);
 
       // Build a fully consistent signal object - every field that depends on
       // label/direction gets explicitly overwritten together, not just label.
@@ -189,36 +196,52 @@ async function checkEmergency() {
 // ════════════════════════════════════════════════════════════════════════
 async function checkHighConfluenceSignal() {
   try {
-    // Cooldown — don't fire more than once every 2 hours
+    // Cooldown — 30 minutes between signals
     if (lastEmergencyTime && (Date.now() - lastEmergencyTime) < 30 * 60 * 1000) return;
 
-    const priceData = await priceFetcher.fetchGoldPrice();
+    // Use MT5 candles as primary price history — real OHLCV data from broker
+    // This replaces the website API price history which used fake random walks
+    // when all APIs were unavailable. Indicators are now calculated from real data.
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
-    const hc = calc.checkHighConfluence(
-      priceData.closes, priceData.highs, priceData.lows,
-      candles, candles4h, candlesDaily
-    );
+
+    if (!candles || candles.length < 20) {
+      console.log('[HIGH CONFLUENCE] Insufficient candle data — skipping');
+      return;
+    }
+
+    const closes = candles.map(c => c.close);
+    const highs   = candles.map(c => c.high);
+    const lows    = candles.map(c => c.low);
+
+    // Get live MT5 price for freshest entry
+    const mt5Price = await mt5.fetchMT5Price().catch(() => null);
+    const currentPrice = mt5Price && mt5Price.price ? mt5Price.price : closes[closes.length - 1];
+    const liveCloses = [...closes.slice(0, -1), currentPrice];
+
+    const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily);
 
     if (hc) {
-      console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + hc.entry);
+      console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
       console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
 
-      const baseline = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
+      const baseline = calc.calcSignal(liveCloses, highs, lows, candles, candles4h, candlesDaily);
+      const levels = calc.calcDynamicLevels(currentPrice, hc.signal, baseline.atr, baseline.rsi);
+
       const sig = {
         ...baseline,
         label: hc.signal,
         direction: hc.signal === 'BUY' ? 'LONG' : 'SHORT',
         strength: 'HIGH CONFLUENCE',
         score: hc.signal === 'BUY' ? 6 : -6,
-        entry: hc.entry,
-        takeProfit: hc.takeProfit,
-        takeProfit2: hc.takeProfit2,
-        stopLoss: hc.stopLoss,
-        confidence: hc.confidence,
-        reasons: hc.reasons,
+        entry: currentPrice,
+        takeProfit:  levels.tp1,
+        takeProfit2: levels.tp2,
+        stopLoss:    levels.sl,
+        confidence:  hc.confidence,
+        reasons:     hc.reasons,
       };
 
-      const saved = await db.saveSignal(sig, 'EMERGENCY', priceData.source);
+      const saved = await db.saveSignal(sig, 'EMERGENCY', 'PrimaCapital MT5 (direct)');
       console.log('🔥 High confluence signal saved as #' + saved.id);
       await telegram.sendSignalAlert(sig);
       lastEmergencyTime = Date.now();
