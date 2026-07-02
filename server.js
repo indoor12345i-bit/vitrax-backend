@@ -382,10 +382,6 @@ async function start() {
   console.log('Starting Vitrax backend...');
   await db.initDB();
 
-  // Generate an initial signal immediately on startup so the dashboard
-  // has something to show right away, instead of waiting for the next cron slot
-  await generateScheduledSignal();
-
   app.listen(PORT, () => {
     console.log(`\n✅ Vitrax backend running on port ${PORT}`);
     console.log('Signal generation: condition-based (no fixed schedule)');
