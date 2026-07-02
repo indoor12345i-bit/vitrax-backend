@@ -3,6 +3,7 @@
 // price check, completely independent of any browser being open
 // ════════════════════════════════════════════════════════════════════════
 const db = require('./database');
+const telegram = require('./telegram');
 
 async function checkOpenTrades(currentPrice) {
   const openTrades = await db.getOpenTrades();
@@ -20,6 +21,7 @@ async function checkOpenTrades(currentPrice) {
       const pnl = isBuy ? tp - entry : entry - tp;
       await db.updateTradeStatus(trade.id, 'CLOSED_WIN', currentSL, currentPrice, pnl);
       console.log(`🎯 Trade #${trade.id} hit TAKE PROFIT — closed WIN ($${pnl.toFixed(2)})`);
+      await telegram.sendTPAlert(trade.id, 1);
       continue;
     }
 
@@ -30,6 +32,9 @@ async function checkOpenTrades(currentPrice) {
       const status = Math.abs(pnl) < 0.5 ? 'CLOSED_BE' : (pnl > 0 ? 'CLOSED_WIN' : 'CLOSED_LOSS');
       await db.updateTradeStatus(trade.id, status, currentSL, currentPrice, pnl);
       console.log(`🛑 Trade #${trade.id} hit stop ($${currentSL}) — closed ${status} ($${pnl.toFixed(2)})`);
+      if (status === 'CLOSED_LOSS') {
+        await telegram.sendSLAlert(trade.id);
+      }
       continue;
     }
 
