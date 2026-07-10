@@ -40,6 +40,39 @@ function trackPriceAndCheckFrozen(price) {
   return (max - min) < MIN_PRICE_MOVEMENT;
 }
 
+// ── Session tradability check ───────────────────────────────────────────
+// Combines two things:
+//   1. Only London/New York sessions are tradable at all (Asian + the
+//      quiet gap are blocked entirely — too little real activity).
+//   2. Even within London/New York, the first and last 15 minutes are
+//      blocked too — the open floods the market with overnight orders
+//      executing at once, and the close has funds unwinding positions
+//      for the day. Both create erratic, misleading price action that
+//      isn't really about a new trend forming.
+// Returns { ok: boolean, reason: string } so callers can log exactly why.
+function checkSessionTradable(sessionInfo) {
+  if (sessionInfo.session !== 'London' && sessionInfo.session !== 'New York') {
+    return { ok: false, reason: `session is ${sessionInfo.session} — only London/New York are tradable` };
+  }
+
+  const now = new Date();
+  const utcH = now.getUTCHours();
+  const utcM = now.getUTCMinutes();
+  const minutesIntoHour = utcM;
+
+  // London opens 07:00 UTC — block first 15 minutes
+  if (utcH === 7 && minutesIntoHour < 15) {
+    return { ok: false, reason: 'within 15 min of London open (07:00 UTC) — opening rush, wait for it to settle' };
+  }
+
+  // New York closes 21:00 UTC — block last 15 minutes (20:45-20:59)
+  if (utcH === 20 && minutesIntoHour >= 45) {
+    return { ok: false, reason: 'within 15 min of New York close (21:00 UTC) — closing unwind, too erratic' };
+  }
+
+  return { ok: true, reason: sessionInfo.session };
+}
+
 // Candle cache — reuse candles across checks instead of fetching every time
 // 1h candles refresh every 60 minutes, 4h every 4 hours, daily every 6 hours
 let candleCache = { candles1h: null, candles4h: null, candlesDaily: null };
@@ -181,10 +214,10 @@ async function checkEmergency() {
       const spike = calc.checkCandleSpike(candles, curP);
       if (spike) {
         const sessionInfo = calc.detectSession();
-        const tradableSession = sessionInfo.session === 'London' || sessionInfo.session === 'New York';
+        const sessionCheck = checkSessionTradable(sessionInfo);
 
-        if (!tradableSession) {
-          console.log(`[BLOCKED] ${spike.signal} candle spike detected but session is ${sessionInfo.session} — spikes only fire during London/New York`);
+        if (!sessionCheck.ok) {
+          console.log(`[BLOCKED] ${spike.signal} candle spike detected but ${sessionCheck.reason}`);
         } else {
         console.log('\n🚀 CANDLE SPIKE SIGNAL:', spike.signal, 'at $' + curP, '(' + spike.atrMultiple + 'x ATR)');
         const baseline = calc.calcSignal(liveC, highs, lows, candles, candles4h, candlesDaily);
@@ -289,16 +322,15 @@ async function checkHighConfluenceSignal() {
       var dominant = hc.dominantSide || (hc.bullVotes > hc.bearVotes ? 'BUY' : 'SELL');
       var domVotes = Math.max(hc.bullVotes, hc.bearVotes);
       var minVotes = Math.min(hc.bullVotes, hc.bearVotes);
-      console.log(`[VOTES] ${dominant} ${domVotes}/7 needed (${minVotes} against) — need ${Math.max(0, 7-domVotes)} more votes`);
+      console.log(`[VOTES] ${dominant} ${domVotes}/6 needed (${minVotes} against) — need ${Math.max(0, 6-domVotes)} more votes`);
     }
 
     if (hc && !hc.belowThreshold && hc.signal) {
       // ── Session filter ────────────────────────────────────────────────
-      // Only fire during London and New York sessions. Asian session gold
-      // is thin/low-volume — moves during it are more often noise than
-      // genuine trend, and the "Quiet" gap has essentially no liquidity.
+      // Only fire during London and New York sessions, and not right at
+      // the open/close of those sessions (see checkSessionTradable above).
       const sessionInfo = calc.detectSession();
-      const tradableSession = sessionInfo.session === 'London' || sessionInfo.session === 'New York';
+      const sessionCheck = checkSessionTradable(sessionInfo);
 
       // ── Spread filter ────────────────────────────────────────────────
       // A wide bid-ask spread means uncertain/thin liquidity right now —
@@ -306,8 +338,8 @@ async function checkHighConfluenceSignal() {
       const spread = mt5Price && mt5Price.ask && mt5Price.bid ? (mt5Price.ask - mt5Price.bid) : null;
       const spreadOk = spread === null ? true : spread <= 0.50;
 
-      if (!tradableSession) {
-        console.log(`[BLOCKED] ${hc.signal} setup reached threshold but session is ${sessionInfo.session} — signals only fire during London/New York`);
+      if (!sessionCheck.ok) {
+        console.log(`[BLOCKED] ${hc.signal} setup reached threshold but ${sessionCheck.reason}`);
       } else if (!spreadOk) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but spread is $${spread.toFixed(2)} (max $0.50) — skipping this cycle`);
       } else {
