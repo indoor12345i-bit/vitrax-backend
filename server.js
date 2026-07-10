@@ -22,6 +22,19 @@ const PORT = process.env.PORT || 3000;
 
 let lastEmergencyTime = null; // prevent spamming emergency signals
 
+// ── Live vote status — what the dashboard polls to show "building" progress ──
+// Updated every check cycle (every 1 min) regardless of whether a signal
+// actually fires. This is in-memory only (not persisted to DB) since it's
+// just "current state right now", not historical data worth keeping.
+let currentVoteStatus = {
+  direction: null,      // 'BUY' or 'SELL' — whichever side is currently leading
+  votes: 0,             // votes on the leading side
+  against: 0,           // votes on the opposing side
+  threshold: 6,         // votes needed to reach the threshold
+  blockedReason: null,  // if threshold was reached but a filter stopped it, why
+  updatedAt: null,      // ISO timestamp of last check
+};
+
 // ── Market freeze detection ─────────────────────────────────────────────
 // Gold markets close for holidays (July 4th, Christmas) and for a daily
 // ~1hr break around 21:00-22:00 UTC. When closed, MT5 keeps returning the
@@ -323,6 +336,15 @@ async function checkHighConfluenceSignal() {
       var domVotes = Math.max(hc.bullVotes, hc.bearVotes);
       var minVotes = Math.min(hc.bullVotes, hc.bearVotes);
       console.log(`[VOTES] ${dominant} ${domVotes}/6 needed (${minVotes} against) — need ${Math.max(0, 6-domVotes)} more votes`);
+
+      currentVoteStatus = {
+        direction: dominant,
+        votes: domVotes,
+        against: minVotes,
+        threshold: 6,
+        blockedReason: null,
+        updatedAt: new Date().toISOString(),
+      };
     }
 
     if (hc && !hc.belowThreshold && hc.signal) {
@@ -349,10 +371,22 @@ async function checkHighConfluenceSignal() {
 
       if (!sessionCheck.ok) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but ${sessionCheck.reason}`);
+        currentVoteStatus = {
+          direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
+          threshold: 6, blockedReason: sessionCheck.reason, updatedAt: new Date().toISOString(),
+        };
       } else if (!spreadOk) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but spread is $${spread.toFixed(2)} (max $0.50) — skipping this cycle`);
+        currentVoteStatus = {
+          direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
+          threshold: 6, blockedReason: `spread too wide ($${spread.toFixed(2)})`, updatedAt: new Date().toISOString(),
+        };
       } else if (newsCheck.blocked) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but within 20 min of "${newsCheck.event}" — skipping regular signal (spike detector remains active for the actual move)`);
+        currentVoteStatus = {
+          direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
+          threshold: 6, blockedReason: `near "${newsCheck.event}" release`, updatedAt: new Date().toISOString(),
+        };
       } else {
         console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
         console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
@@ -379,6 +413,10 @@ async function checkHighConfluenceSignal() {
         console.log('🔥 High confluence signal saved as #' + saved.id);
         await telegram.sendSignalAlert(sig);
         lastEmergencyTime = Date.now();
+
+        // Reset the building-progress tracker — a real signal now exists,
+        // the dashboard's main action card takes over from here.
+        currentVoteStatus = { direction: null, votes: 0, against: 0, threshold: 6, blockedReason: null, updatedAt: new Date().toISOString() };
       }
     }
   } catch (err) {
@@ -520,6 +558,12 @@ app.get('/api/live-price', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Live vote-building progress — lets the dashboard show "getting close to
+// a signal" in real time, updated every 1 minute by the confluence check.
+app.get('/api/vote-status', (req, res) => {
+  res.json(currentVoteStatus);
 });
 
 // Manual trigger endpoints (useful for testing without waiting for cron)
