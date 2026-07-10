@@ -902,8 +902,10 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var p = closes[closes.length - 1];
   var atrVal = calcATR(closes, highs, lows, 14);
 
-  // Minimum ATR — market must be active enough to trade
-  if (atrVal < 5) return null;
+  // Minimum ATR — market must be genuinely active enough to trade.
+  // Raised from 5 to 8: below this, gold is moving too little for the
+  // fixed $7 TP1 to be reliably reachable before natural noise reverses it.
+  if (atrVal < 8) return null;
 
   var reasons = [];
   var bullVotes = 0, bearVotes = 0;
