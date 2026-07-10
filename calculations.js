@@ -587,12 +587,6 @@ function detectStopHunt(closes, lows) {
   return spikedBelow && recovered;
 }
 
-function displayDXY(closes) {
-  var goldChange = ((closes[closes.length-1]-closes[0]) / closes[0]) * 100;
-  var dxyEstimate = -goldChange*0.7;
-  return dxyEstimate>0.3 ? -1 : dxyEstimate<-0.3 ? 1 : 0;
-}
-
 var ECON_EVENTS = [
   {day:1, month:7, time:'15:00', name:'US ISM Manufacturing PMI', impact:'HIGH', goldEffect:'bearish if strong'},
   {day:4, month:7, time:'15:30', name:'US Non-Farm Payrolls (NFP)', impact:'HIGH', goldEffect:'bearish if strong'},
@@ -795,7 +789,6 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   var sessionInfo = detectSession();
   var whaleDetected = detectWhale(closes);
   var stopHunt = detectStopHunt(closes, lows);
-  var dxyScore = displayDXY(closes);
   var hasEvent = !!checkEconEvent();
   var isChoppy = choppy(closes);
 
@@ -870,7 +863,7 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     rsi: rsiV, ema14: e14v, ema25: e25v, confidence: confidence,
     fearGreed: fgScore, candlePattern: paPattern.name || pattern.name, session: sessionInfo.session,
     whaleDetected: whaleDetected, stopHuntDetected: stopHunt, isChoppy: isChoppy,
-    hasEconEvent: hasEvent, dxyScore: dxyScore, avwap: avwapValue,
+    hasEconEvent: hasEvent, avwap: avwapValue,
     mtfScore: mtfScore, mtfReasons: mtfReasons
   };
 }
@@ -986,8 +979,11 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var dominantVotes = Math.max(bullVotes, bearVotes);
   var minorityVotes = Math.min(bullVotes, bearVotes);
 
-  // Must have at least 7 votes on dominant side and no more than 3 against
-  if (dominantVotes < 7 || minorityVotes > 3) {
+  // Must have at least 6 votes on dominant side and no more than 3 against.
+  // Lowered from 7 on July 10 — the new session/spread/ATR gates now catch
+  // the low-quality setups that a looser vote threshold used to let through,
+  // so 6 votes fires more often without reopening that specific risk.
+  if (dominantVotes < 6 || minorityVotes > 3) {
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true };
   }
 
@@ -995,7 +991,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   if (reasons.length < 2) return null;
 
   var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV);
-  var confidence = Math.min(85, 65 + (dominantVotes - 7) * 5 - (minorityVotes * 3));
+  var confidence = Math.min(85, 65 + (dominantVotes - 6) * 5 - (minorityVotes * 3));
 
   console.log('[HIGH CONFLUENCE] ' + dominantSide + ' detected — ' + dominantVotes + '/' + totalVotes + ' votes | confidence ' + confidence + '%');
 
@@ -1204,6 +1200,6 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
-  displayDXY, checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
+  checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
   ECON_EVENTS
 };
