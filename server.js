@@ -180,6 +180,12 @@ async function checkEmergency() {
     if (lastEmergencyTime === null || (Date.now() - lastEmergencyTime) > 30 * 60 * 1000) {
       const spike = calc.checkCandleSpike(candles, curP);
       if (spike) {
+        const sessionInfo = calc.detectSession();
+        const tradableSession = sessionInfo.session === 'London' || sessionInfo.session === 'New York';
+
+        if (!tradableSession) {
+          console.log(`[BLOCKED] ${spike.signal} candle spike detected but session is ${sessionInfo.session} — spikes only fire during London/New York`);
+        } else {
         console.log('\n🚀 CANDLE SPIKE SIGNAL:', spike.signal, 'at $' + curP, '(' + spike.atrMultiple + 'x ATR)');
         const baseline = calc.calcSignal(liveC, highs, lows, candles, candles4h, candlesDaily);
         const sig = {
@@ -193,13 +199,14 @@ async function checkEmergency() {
           takeProfit2: spike.takeProfit2,
           stopLoss:    spike.stopLoss,
           confidence:  spike.confidence,
-          reasons:     spike.reasons,
+          reasons:     [...spike.reasons, `Session: ${sessionInfo.session}`],
         };
         const saved = await db.saveSignal(sig, 'EMERGENCY', 'PrimaCapital MT5 (direct)');
         console.log('🚀 Spike signal saved as #' + saved.id);
         await telegram.sendSignalAlert(sig);
         lastEmergencyTime = Date.now();
         return; // skip regular emergency check if spike already fired
+        }
       }
     }
 
@@ -286,30 +293,50 @@ async function checkHighConfluenceSignal() {
     }
 
     if (hc && !hc.belowThreshold && hc.signal) {
-      console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
-      console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
+      // ── Session filter ────────────────────────────────────────────────
+      // Only fire during London and New York sessions. Asian session gold
+      // is thin/low-volume — moves during it are more often noise than
+      // genuine trend, and the "Quiet" gap has essentially no liquidity.
+      const sessionInfo = calc.detectSession();
+      const tradableSession = sessionInfo.session === 'London' || sessionInfo.session === 'New York';
 
-      const baseline = calc.calcSignal(liveCloses, highs, lows, candles, candles4h, candlesDaily);
-      const levels = calc.calcDynamicLevels(currentPrice, hc.signal, baseline.atr, baseline.rsi);
+      // ── Spread filter ────────────────────────────────────────────────
+      // A wide bid-ask spread means uncertain/thin liquidity right now —
+      // entering on a wide spread eats directly into the $7 TP1 target.
+      const spread = mt5Price && mt5Price.ask && mt5Price.bid ? (mt5Price.ask - mt5Price.bid) : null;
+      const spreadOk = spread === null ? true : spread <= 0.50;
 
-      const sig = {
-        ...baseline,
-        label: hc.signal,
-        direction: hc.signal === 'BUY' ? 'LONG' : 'SHORT',
-        strength: 'HIGH CONFLUENCE',
-        score: hc.signal === 'BUY' ? 6 : -6,
-        entry: currentPrice,
-        takeProfit:  levels.tp1,
-        takeProfit2: levels.tp2,
-        stopLoss:    levels.sl,
-        confidence:  hc.confidence,
-        reasons:     hc.reasons,
-      };
+      if (!tradableSession) {
+        console.log(`[BLOCKED] ${hc.signal} setup reached threshold but session is ${sessionInfo.session} — signals only fire during London/New York`);
+      } else if (!spreadOk) {
+        console.log(`[BLOCKED] ${hc.signal} setup reached threshold but spread is $${spread.toFixed(2)} (max $0.50) — skipping this cycle`);
+      } else {
+        console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
+        console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
+        console.log('   Session:', sessionInfo.session, '| Spread: $' + (spread !== null ? spread.toFixed(2) : 'n/a'));
 
-      const saved = await db.saveSignal(sig, 'EMERGENCY', 'PrimaCapital MT5 (direct)');
-      console.log('🔥 High confluence signal saved as #' + saved.id);
-      await telegram.sendSignalAlert(sig);
-      lastEmergencyTime = Date.now();
+        const baseline = calc.calcSignal(liveCloses, highs, lows, candles, candles4h, candlesDaily);
+        const levels = calc.calcDynamicLevels(currentPrice, hc.signal, baseline.atr, baseline.rsi);
+
+        const sig = {
+          ...baseline,
+          label: hc.signal,
+          direction: hc.signal === 'BUY' ? 'LONG' : 'SHORT',
+          strength: 'HIGH CONFLUENCE',
+          score: hc.signal === 'BUY' ? 6 : -6,
+          entry: currentPrice,
+          takeProfit:  levels.tp1,
+          takeProfit2: levels.tp2,
+          stopLoss:    levels.sl,
+          confidence:  hc.confidence,
+          reasons:     [...hc.reasons, `Session: ${sessionInfo.session}`],
+        };
+
+        const saved = await db.saveSignal(sig, 'EMERGENCY', 'PrimaCapital MT5 (direct)');
+        console.log('🔥 High confluence signal saved as #' + saved.id);
+        await telegram.sendSignalAlert(sig);
+        lastEmergencyTime = Date.now();
+      }
     }
   } catch (err) {
     console.error('High confluence check failed:', err.message);
