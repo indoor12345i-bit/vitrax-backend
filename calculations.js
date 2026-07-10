@@ -587,20 +587,59 @@ function detectStopHunt(closes, lows) {
   return spikedBelow && recovered;
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// ECONOMIC CALENDAR — requires MONTHLY manual maintenance
+//
+// There is no live economic-calendar API wired into this system. These
+// dates were verified against BLS/BEA/Fed sources on July 10, 2026 for
+// July 2026 specifically. They will NOT auto-update for future months —
+// whoever maintains this needs to check bls.gov/schedule and the Fed's
+// FOMC calendar at the start of each month and update this array, or
+// checkEconEvent() will simply find nothing and the blackout won't fire
+// (safe failure — it just stops protecting against news, doesn't create
+// a false positive).
+//
+// Verified corrections made July 10, 2026 — the previous version of this
+// list had THREE confirmed wrong dates (CPI was 4 days off, NFP was 2 days
+// off, Fed decision was 12 days off). GDP and PCE dates below could not be
+// confirmed with full certainty and are marked accordingly — treat their
+// blackout as a bonus, not a guarantee.
+// ════════════════════════════════════════════════════════════════════════
 var ECON_EVENTS = [
-  {day:1, month:7, time:'15:00', name:'US ISM Manufacturing PMI', impact:'HIGH', goldEffect:'bearish if strong'},
-  {day:4, month:7, time:'15:30', name:'US Non-Farm Payrolls (NFP)', impact:'HIGH', goldEffect:'bearish if strong'},
-  {day:10, month:7, time:'15:30', name:'US CPI Inflation', impact:'HIGH', goldEffect:'bullish if high'},
-  {day:16, month:7, time:'18:00', name:'Fed Interest Rate Decision', impact:'CRITICAL', goldEffect:'bearish if hike'},
-  {day:25, month:7, time:'15:30', name:'US GDP Growth', impact:'HIGH', goldEffect:'bearish if strong'},
-  {day:30, month:7, time:'15:30', name:'US Core PCE Inflation', impact:'HIGH', goldEffect:'bullish if high'},
+  {year:2026, day:1,  month:7, time:'14:00', name:'US ISM Manufacturing PMI',   impact:'HIGH',     goldEffect:'bearish if strong'},
+  {year:2026, day:2,  month:7, time:'12:30', name:'US Non-Farm Payrolls (NFP)', impact:'HIGH',     goldEffect:'bearish if strong'}, // verified: moved up from usual 1st-Friday due to July 4 holiday
+  {year:2026, day:14, month:7, time:'12:30', name:'US CPI Inflation',          impact:'HIGH',     goldEffect:'bullish if high'},  // verified against BLS: 8:30am ET
+  {year:2026, day:25, month:7, time:'12:30', name:'US Core PCE Inflation',     impact:'HIGH',     goldEffect:'bullish if high'},  // best-available estimate, not fully confirmed
+  {year:2026, day:29, month:7, time:'18:00', name:'Fed Interest Rate Decision', impact:'CRITICAL', goldEffect:'bearish if hike'},  // verified: FOMC meets 28-29th, decision announced 2nd day
+  {year:2026, day:30, month:7, time:'12:30', name:'US GDP Growth (Q2 advance)', impact:'HIGH',     goldEffect:'bearish if strong'}, // best-available estimate, not fully confirmed
 ];
 
 function checkEconEvent() {
   var now = new Date();
   return ECON_EVENTS.find(function(e) {
-    return e.day===now.getDate() && e.month===(now.getMonth()+1) && e.impact!=='LOW';
+    return e.year===now.getFullYear() && e.day===now.getDate() && e.month===(now.getMonth()+1) && e.impact!=='LOW';
   });
+}
+
+// ── News blackout window ──────────────────────────────────────────────
+// Returns true if we're within `windowMinutes` of a scheduled event's
+// exact release time (not just "same day" — same day but 8 hours away
+// from the release shouldn't be blocked, only the volatile window
+// right around the actual release).
+function isWithinNewsBlackout(windowMinutes) {
+  var event = checkEconEvent();
+  if (!event) return { blocked: false };
+
+  var now = new Date();
+  var nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  var parts = event.time.split(':');
+  var eventMinutes = parseInt(parts[0]) * 60 + parseInt(parts[1]);
+  var diff = Math.abs(nowMinutes - eventMinutes);
+
+  if (diff <= windowMinutes) {
+    return { blocked: true, event: event.name, minutesFromEvent: nowMinutes - eventMinutes };
+  }
+  return { blocked: false };
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1200,6 +1239,6 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
-  checkEconEvent, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
+  checkEconEvent, isWithinNewsBlackout, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
   ECON_EVENTS
 };
