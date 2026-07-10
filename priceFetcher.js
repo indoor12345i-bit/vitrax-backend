@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════
-// PRICE FETCHER — same 9-API fallback chain for scheduled/emergency signals
+// PRICE FETCHER — same 9-API fallback chain as the dashboard frontend
 // ════════════════════════════════════════════════════════════════════════
 const fetch = require('node-fetch');
 
@@ -146,19 +146,11 @@ async function tryCoinGecko() {
   return { ...d, source: 'CoinGecko' };
 }
 
-function simulatedData() {
-  var base = 4088, closes = [], p = base - 80;
-  for (var i = 0; i < 30; i++) {
-    p += (Math.random() - 0.46) * 22;
-    if (p < base - 120) p += 15;
-    if (p > base + 120) p -= 15;
-    closes.push(+p.toFixed(2));
-  }
-  var highs = closes.map(c => +(c + Math.random() * 12).toFixed(2));
-  var lows = closes.map(c => +(c - Math.random() * 12).toFixed(2));
-  return { closes, highs, lows, source: 'SIMULATED' };
-}
-
+// Tries each API in order, returns the first success. Logs which one worked.
+// If every single API fails, returns null rather than fabricating fake
+// prices — a fake price used for real trade management (breakeven,
+// trailing stop, TP/SL checks) could cause an incorrect action on a real
+// open position. Skipping the cycle is always safer than guessing.
 async function fetchGoldPrice() {
   const chain = [
     tryAlphaVantage, tryGoldApiCom, tryGoldApiIo, tryGoldPricez,
@@ -173,39 +165,7 @@ async function fetchGoldPrice() {
       console.log(`❌ ${attempt.name} failed: ${err.message}`);
     }
   }
-  console.log('⚠️  ALL 9 APIs FAILED — falling back to simulated data');
-  return simulatedData();
-}
-
-async function fetchLivePrice() {
-  // SIMPLIFIED: only tries gold-api.com, the one source built specifically
-  // for high-frequency real-time polling (this function runs every 30
-  // seconds, far more often than the trading signals which use the full
-  // 9-API chain in fetchGoldPrice() above - unchanged).
-  //
-  // If gold-api.com fails, this returns null - the dashboard will show
-  // "price unavailable" rather than silently falling back to a stale
-  // number from a low-frequency API, or to simulated data. No fake
-  // numbers are ever shown for the live ticker.
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const r = await fetch('https://api.gold-api.com/price/XAU');
-      if (!r.ok) {
-        const bodyText = await r.text();
-        console.log(`fetchLivePrice: gold-api.com attempt ${attempt} - HTTP ${r.status} - ${bodyText.slice(0, 150)}`);
-      } else {
-        const data = await r.json();
-        if (data && data.price) {
-          return { price: parseFloat(data.price), bid: data.bid, ask: data.ask, source: 'gold-api.com' };
-        }
-        console.log(`fetchLivePrice: gold-api.com attempt ${attempt} - no price field. Response:`, JSON.stringify(data).slice(0, 200));
-      }
-    } catch (err) {
-      console.log(`fetchLivePrice: gold-api.com attempt ${attempt} failed -`, err.message);
-    }
-  }
-
-  console.log('fetchLivePrice: gold-api.com unavailable after 2 attempts - returning null (no fallback, no simulated data)');
+  console.log('⚠️  ALL 9 website APIs failed this cycle — no real price available, skipping (MT5 remains the primary source regardless)');
   return null;
 }
 
@@ -221,4 +181,4 @@ async function fetchNewsSentiment(analyzeNewsSentiment) {
   }
 }
 
-module.exports = { fetchGoldPrice, fetchLivePrice, fetchNewsSentiment, KEYS };
+module.exports = { fetchGoldPrice, fetchNewsSentiment, KEYS };
