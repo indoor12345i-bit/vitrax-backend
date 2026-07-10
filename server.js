@@ -338,10 +338,21 @@ async function checkHighConfluenceSignal() {
       const spread = mt5Price && mt5Price.ask && mt5Price.bid ? (mt5Price.ask - mt5Price.bid) : null;
       const spreadOk = spread === null ? true : spread <= 0.50;
 
+      // ── News blackout ────────────────────────────────────────────────
+      // Blocks REGULAR signals within 20 minutes of a scheduled high-impact
+      // release (NFP, CPI, Fed decision, etc). The volatility right around
+      // a release is often just noise/whipsaw, not a real trend forming.
+      // Deliberately NOT applied to the candle-spike detector — that one
+      // exists specifically to catch genuine moves that follow news like
+      // this, exactly like what happened with today's NFP earlier.
+      const newsCheck = calc.isWithinNewsBlackout(20);
+
       if (!sessionCheck.ok) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but ${sessionCheck.reason}`);
       } else if (!spreadOk) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but spread is $${spread.toFixed(2)} (max $0.50) — skipping this cycle`);
+      } else if (newsCheck.blocked) {
+        console.log(`[BLOCKED] ${hc.signal} setup reached threshold but within 20 min of "${newsCheck.event}" — skipping regular signal (spike detector remains active for the actual move)`);
       } else {
         console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
         console.log('   Votes:', hc.bullVotes, 'bull /', hc.bearVotes, 'bear | Confidence:', hc.confidence + '%');
