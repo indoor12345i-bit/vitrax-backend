@@ -22,6 +22,24 @@ const PORT = process.env.PORT || 3000;
 
 let lastEmergencyTime = null; // prevent spamming emergency signals
 
+// ── Market freeze detection ─────────────────────────────────────────────
+// Gold markets close for holidays (July 4th, Christmas) and for a daily
+// ~1hr break around 21:00-22:00 UTC. When closed, MT5 keeps returning the
+// SAME frozen price. Without this check, the confluence detector would
+// keep firing fake signals against a price that isn't actually moving.
+let recentLivePrices = []; // last 5 raw MT5 prices
+const FREEZE_CHECK_COUNT = 5;
+const MIN_PRICE_MOVEMENT = 0.02; // if range across last 5 prices is below this, market is frozen
+
+function trackPriceAndCheckFrozen(price) {
+  recentLivePrices.push(price);
+  if (recentLivePrices.length > FREEZE_CHECK_COUNT) recentLivePrices.shift();
+  if (recentLivePrices.length < FREEZE_CHECK_COUNT) return false; // not enough data yet
+  const min = Math.min(...recentLivePrices);
+  const max = Math.max(...recentLivePrices);
+  return (max - min) < MIN_PRICE_MOVEMENT;
+}
+
 // Candle cache — reuse candles across checks instead of fetching every time
 // 1h candles refresh every 60 minutes, 4h every 4 hours, daily every 6 hours
 let candleCache = { candles1h: null, candles4h: null, candlesDaily: null };
@@ -57,6 +75,10 @@ async function generateScheduledSignal() {
 
   try {
     const priceData = await priceFetcher.fetchGoldPrice();
+    if (!priceData) {
+      console.log('No real price available from any source this cycle — skipping');
+      return { error: 'No real price data available — all sources failed. Try again shortly.' };
+    }
 
     // Fetch real OHLCV candles from MT5 for AVWAP + MTF calculation
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
@@ -142,8 +164,6 @@ async function generateScheduledSignal() {
 // ════════════════════════════════════════════════════════════════════════
 async function checkEmergency() {
   try {
-    const priceData = await priceFetcher.fetchGoldPrice();
-
     // Fetch candles for AVWAP + MTF filtering
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
     if (!candles || candles.length < 20) return;
@@ -210,7 +230,7 @@ async function checkEmergency() {
           : null
       };
 
-      await db.saveSignal(sig, 'EMERGENCY', priceData.source);
+      await db.saveSignal(sig, 'EMERGENCY', 'PrimaCapital MT5 (direct)');
     }
   } catch (err) {
     console.error('Emergency check failed:', err.message);
@@ -247,6 +267,12 @@ async function checkHighConfluenceSignal() {
     const mt5Price = await mt5.fetchMT5Price().catch(() => null);
     const currentPrice = mt5Price && mt5Price.price ? mt5Price.price : closes[closes.length - 1];
     const liveCloses = [...closes.slice(0, -1), currentPrice];
+
+    // ── Market freeze check — skip if price hasn't moved (market closed) ──
+    if (trackPriceAndCheckFrozen(currentPrice)) {
+      console.log(`[SCAN] $${currentPrice.toFixed(2)} — market appears CLOSED (frozen price) — skipping`);
+      return;
+    }
 
     console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${new Date().toISOString().substr(11,8)} UTC`);
     const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily);
