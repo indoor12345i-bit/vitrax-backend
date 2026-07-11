@@ -36,7 +36,7 @@ const MIN_1H_LOOKBACK = 100;   // ~4 days of hourly history before evaluating
 const MIN_4H_LOOKBACK = 15;
 const MIN_DAILY_LOOKBACK = 14;
 
-function runBacktest(candles1h, candles4h, candlesDaily) {
+async function runBacktest(candles1h, candles4h, candlesDaily) {
   if (!candles1h || candles1h.length < MIN_1H_LOOKBACK + 20) {
     return { error: `Not enough historical 1h candles — need at least ${MIN_1H_LOOKBACK + 20}, got ${candles1h ? candles1h.length : 0}` };
   }
@@ -48,6 +48,16 @@ function runBacktest(candles1h, candles4h, candlesDaily) {
   let lastSignalTime = null;
   let skippedByFilter = { session: 0, cooldown: 0, belowThreshold: 0, insufficientMTF: 0 };
 
+  // Forward-only pointers into the 4h/daily arrays — since every array is
+  // chronologically ordered and we only ever move forward in time, we can
+  // advance these once and never re-scan from the start. Turns what was
+  // an O(n×m) re-filter on every single hourly candle into a simple O(n+m)
+  // walk — this was almost certainly why the first version locked up the
+  // whole single-threaded server long enough for Railway to consider it
+  // unresponsive and restart it.
+  let ptr4h = 0;
+  let ptrDaily = 0;
+
   for (let i = MIN_1H_LOOKBACK; i < candles1h.length; i++) {
     const candle = candles1h[i];
     const candleTime = new Date(candle.time);
@@ -58,14 +68,27 @@ function runBacktest(candles1h, candles4h, candlesDaily) {
       continue;
     }
 
+    // Advance the 4h/daily pointers forward to just past this candle's time
+    while (ptr4h < candles4h.length && new Date(candles4h[ptr4h].time) <= candleTime) ptr4h++;
+    while (ptrDaily < candlesDaily.length && new Date(candlesDaily[ptrDaily].time) <= candleTime) ptrDaily++;
+    const sub4h = candles4h.slice(0, ptr4h);
+    const subDaily = candlesDaily.slice(0, ptrDaily);
+
+    // Yield back to the event loop every 100 candles. This is a fully
+    // synchronous CPU-bound loop otherwise — on a single-threaded Node
+    // server that means it would completely block everything else
+    // (health checks, the live 1-min confluence check, live price
+    // updates) for however long the whole run takes. This keeps the
+    // server responsive throughout instead of freezing solid.
+    if (i % 100 === 0) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+
     // Build history up to and including this candle — no lookahead bias
     const subCandles = candles1h.slice(0, i + 1);
     const closes = subCandles.map(c => c.close);
     const highs = subCandles.map(c => c.high);
     const lows = subCandles.map(c => c.low);
-
-    const sub4h = candles4h.filter(c => new Date(c.time) <= candleTime);
-    const subDaily = candlesDaily.filter(c => new Date(c.time) <= candleTime);
 
     if (sub4h.length < MIN_4H_LOOKBACK || subDaily.length < MIN_DAILY_LOOKBACK) {
       skippedByFilter.insufficientMTF++;
