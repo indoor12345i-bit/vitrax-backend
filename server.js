@@ -580,15 +580,17 @@ app.get('/api/vote-status', (req, res) => {
 app.get('/api/backtest', async (req, res) => {
   try {
     // Default to a much smaller, safer window for a first run — roughly
-    // 3 weeks of hourly data. The first attempt requested ~4 months and
-    // very likely locked up the single-threaded server long enough for
-    // Railway to consider it unresponsive and restart it. Can be scaled
-    // up later via ?hours=N once this smaller size is confirmed working.
+    // 3 weeks of hourly data. Scale up later via ?hours=N once confirmed
+    // working. ?votes=N tests a different vote threshold than the current
+    // live setting (6) against the exact same historical data — this is
+    // how future threshold changes should be decided, evidence first
+    // instead of changing live settings and waiting days to find out.
     const hours1h = Math.min(parseInt(req.query.hours) || 500, 3000);
     const hours4h = Math.ceil(hours1h / 3);
     const hoursDaily = Math.ceil(hours1h / 15);
+    const voteThreshold = parseInt(req.query.votes) || 6;
 
-    console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days)...`);
+    console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}...`);
     const [candles1h, candles4h, candlesDaily] = await Promise.all([
       mt5.fetchMT5Candles('1h', hours1h).catch(() => null),
       mt5.fetchMT5Candles('4h', hours4h).catch(() => null),
@@ -600,7 +602,7 @@ app.get('/api/backtest', async (req, res) => {
     }
 
     console.log(`[BACKTEST] Got ${candles1h.length} 1h, ${candles4h ? candles4h.length : 0} 4h, ${candlesDaily ? candlesDaily.length : 0} daily candles. Running simulation...`);
-    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily);
+    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
     res.json(results);
