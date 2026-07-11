@@ -965,7 +965,8 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 // rare — when it happens, it represents genuine multi-layer confluence
 // that has historically preceded strong directional moves.
 // ════════════════════════════════════════════════════════════════════════
-function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily) {
+function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold) {
+  var threshold = voteThreshold || 6; // defaults to 6 — matches live behavior exactly unless overridden
   if (!closes || closes.length < 30) return null;
 
   var p = closes[closes.length - 1];
@@ -1057,11 +1058,11 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var dominantVotes = Math.max(bullVotes, bearVotes);
   var minorityVotes = Math.min(bullVotes, bearVotes);
 
-  // Must have at least 6 votes on dominant side and no more than 3 against.
-  // Lowered from 7 on July 10 — the new session/spread/ATR gates now catch
-  // the low-quality setups that a looser vote threshold used to let through,
-  // so 6 votes fires more often without reopening that specific risk.
-  if (dominantVotes < 6 || minorityVotes > 3) {
+  // Must have at least `threshold` votes on dominant side and no more than
+  // 3 against. Defaults to 6 (current live setting), but the backtest can
+  // pass any value to directly compare thresholds against real history
+  // instead of changing live settings and waiting days to see what happens.
+  if (dominantVotes < threshold || minorityVotes > 3) {
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true };
   }
 
@@ -1069,7 +1070,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   if (reasons.length < 2) return null;
 
   var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV);
-  var confidence = Math.min(85, 65 + (dominantVotes - 6) * 5 - (minorityVotes * 3));
+  var confidence = Math.min(85, 65 + (dominantVotes - threshold) * 5 - (minorityVotes * 3));
 
   console.log('[HIGH CONFLUENCE] ' + dominantSide + ' detected — ' + dominantVotes + '/' + totalVotes + ' votes | confidence ' + confidence + '%');
 
