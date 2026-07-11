@@ -475,7 +475,7 @@ function calcATR(closes, highs, lows, period) {
   return +atr.toFixed(2);
 }
 
-function calcDynamicLevels(cur, sig, atr, rsiV) {
+function calcDynamicLevels(cur, sig, atr, rsiV, tp1Override, tp2Override) {
   if (sig === 'WAIT') return { tp: null, tp1: null, tp2: null, sl: null, atr: atr };
   var slMultiplier = 0.5;
   if (rsiV < 25 && sig === 'BUY') { slMultiplier = 0.4; }
@@ -485,11 +485,11 @@ function calcDynamicLevels(cur, sig, atr, rsiV) {
   // SL — unchanged, ATR-based
   var slDist = Math.max(Math.min(+(atr*slMultiplier).toFixed(2), 50), 5);
 
-  // TP1 — conservative target ($7 fixed)
-  var tp1Dist = 7;
+  // TP1 — defaults to $7 (current live value), overridable for backtesting
+  var tp1Dist = tp1Override || 7;
 
-  // TP2 — extended target ($18 fixed)
-  var tp2Dist = 18;
+  // TP2 — defaults to $18 (current live value), overridable for backtesting
+  var tp2Dist = tp2Override || 18;
 
   var tp1, tp2, sl;
   if (sig === 'BUY') {
@@ -965,7 +965,7 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 // rare — when it happens, it represents genuine multi-layer confluence
 // that has historically preceded strong directional moves.
 // ════════════════════════════════════════════════════════════════════════
-function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold) {
+function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override) {
   var threshold = voteThreshold || 6; // defaults to 6 — matches live behavior exactly unless overridden
   if (!closes || closes.length < 30) return null;
 
@@ -1069,7 +1069,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   // Must have at least 2 named reasons (specific meaningful conditions)
   if (reasons.length < 2) return null;
 
-  var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV);
+  var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override, tp2Override);
   var confidence = Math.min(85, 65 + (dominantVotes - threshold) * 5 - (minorityVotes * 3));
 
   console.log('[HIGH CONFLUENCE] ' + dominantSide + ' detected — ' + dominantVotes + '/' + totalVotes + ' votes | confidence ' + confidence + '%');
