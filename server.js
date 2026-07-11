@@ -579,11 +579,20 @@ app.get('/api/vote-status', (req, res) => {
 // it's evaluating the full indicator stack at every historical hour.
 app.get('/api/backtest', async (req, res) => {
   try {
-    console.log('[BACKTEST] Fetching historical candles...');
+    // Default to a much smaller, safer window for a first run — roughly
+    // 3 weeks of hourly data. The first attempt requested ~4 months and
+    // very likely locked up the single-threaded server long enough for
+    // Railway to consider it unresponsive and restart it. Can be scaled
+    // up later via ?hours=N once this smaller size is confirmed working.
+    const hours1h = Math.min(parseInt(req.query.hours) || 500, 3000);
+    const hours4h = Math.ceil(hours1h / 3);
+    const hoursDaily = Math.ceil(hours1h / 15);
+
+    console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days)...`);
     const [candles1h, candles4h, candlesDaily] = await Promise.all([
-      mt5.fetchMT5Candles('1h', 3000).catch(() => null),
-      mt5.fetchMT5Candles('4h', 800).catch(() => null),
-      mt5.fetchMT5Candles('1d', 150).catch(() => null),
+      mt5.fetchMT5Candles('1h', hours1h).catch(() => null),
+      mt5.fetchMT5Candles('4h', hours4h).catch(() => null),
+      mt5.fetchMT5Candles('1d', hoursDaily).catch(() => null),
     ]);
 
     if (!candles1h) {
@@ -591,7 +600,7 @@ app.get('/api/backtest', async (req, res) => {
     }
 
     console.log(`[BACKTEST] Got ${candles1h.length} 1h, ${candles4h ? candles4h.length : 0} 4h, ${candlesDaily ? candlesDaily.length : 0} daily candles. Running simulation...`);
-    const results = backtest.runBacktest(candles1h, candles4h, candlesDaily);
+    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
     res.json(results);
