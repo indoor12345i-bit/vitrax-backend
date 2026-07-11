@@ -589,6 +589,8 @@ app.get('/api/backtest', async (req, res) => {
     const hours4h = Math.ceil(hours1h / 3);
     const hoursDaily = Math.ceil(hours1h / 15);
     const voteThreshold = parseInt(req.query.votes) || 6;
+    const tp1Override = req.query.tp1 ? parseFloat(req.query.tp1) : undefined;
+    const tp2Override = req.query.tp2 ? parseFloat(req.query.tp2) : undefined;
 
     console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}...`);
     const [candles1h, candles4h, candlesDaily] = await Promise.all([
@@ -602,7 +604,7 @@ app.get('/api/backtest', async (req, res) => {
     }
 
     console.log(`[BACKTEST] Got ${candles1h.length} 1h, ${candles4h ? candles4h.length : 0} 4h, ${candlesDaily ? candlesDaily.length : 0} daily candles. Running simulation...`);
-    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold);
+    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
     res.json(results);
