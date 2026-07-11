@@ -36,7 +36,7 @@ const MIN_1H_LOOKBACK = 100;   // ~4 days of hourly history before evaluating
 const MIN_4H_LOOKBACK = 15;
 const MIN_DAILY_LOOKBACK = 14;
 
-async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold) {
+async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override) {
   const threshold = voteThreshold || 6; // matches live default unless overridden
   if (!candles1h || candles1h.length < MIN_1H_LOOKBACK + 20) {
     return { error: `Not enough historical 1h candles — need at least ${MIN_1H_LOOKBACK + 20}, got ${candles1h ? candles1h.length : 0}` };
@@ -97,7 +97,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold) {
     }
 
     // Run the EXACT same confluence logic live Vipertex uses right now
-    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold);
+    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold, tp1Override, tp2Override);
 
     if (!hc || hc.belowThreshold || !hc.signal) {
       if (hc && hc.belowThreshold) skippedByFilter.belowThreshold++;
@@ -174,6 +174,8 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold) {
 
   return {
     voteThreshold: threshold,
+    tp1Used: tp1Override || 7,
+    tp2Used: tp2Override || 18,
     dataRange: {
       from: candles1h[MIN_1H_LOOKBACK].time,
       to: candles1h[candles1h.length - 1].time,
