@@ -13,6 +13,7 @@ const mt5 = require('./mt5PriceFeed');
 const db = require('./database');
 const telegram = require('./telegram');
 const tradeManager = require('./tradeManager');
+const backtest = require('./backtest');
 
 const app = express();
 app.use(cors());
@@ -63,46 +64,10 @@ function trackPriceAndCheckFrozen(price) {
 //      for the day. Both create erratic, misleading price action that
 //      isn't really about a new trend forming.
 // Returns { ok: boolean, reason: string } so callers can log exactly why.
-function checkSessionTradable(sessionInfo) {
-  const now = new Date();
-  const utcDay = now.getUTCDay(); // 0=Sunday, 5=Friday, 6=Saturday
-  const utcH = now.getUTCHours();
-  const utcM = now.getUTCMinutes();
-
-  // ── Weekly market closure ──────────────────────────────────────────
-  // Gold/forex closes Friday ~21:00 UTC and doesn't reopen until Sunday
-  // ~21:00-22:00 UTC. This is a HARD, predictable closure — not something
-  // that should wait to be reactively detected by 5 identical prices in
-  // a row. Checking this explicitly prevents ever mistaking a frozen
-  // weekend price for a live, tradeable one.
-  if (utcDay === 6) {
-    return { ok: false, reason: 'market closed for the weekend (Saturday)' };
-  }
-  if (utcDay === 0 && utcH < 21) {
-    return { ok: false, reason: 'market closed for the weekend (reopens ~21:00 UTC Sunday)' };
-  }
-  if (utcDay === 5 && utcH >= 21) {
-    return { ok: false, reason: 'market closed for the weekend (closed ~21:00 UTC Friday)' };
-  }
-
-  if (sessionInfo.session !== 'London' && sessionInfo.session !== 'New York') {
-    return { ok: false, reason: `session is ${sessionInfo.session} — only London/New York are tradable` };
-  }
-
-  const minutesIntoHour = utcM;
-
-  // London opens 07:00 UTC — block first 15 minutes
-  if (utcH === 7 && minutesIntoHour < 15) {
-    return { ok: false, reason: 'within 15 min of London open (07:00 UTC) — opening rush, wait for it to settle' };
-  }
-
-  // New York closes 21:00 UTC — block last 15 minutes (20:45-20:59)
-  if (utcH === 20 && minutesIntoHour >= 45) {
-    return { ok: false, reason: 'within 15 min of New York close (21:00 UTC) — closing unwind, too erratic' };
-  }
-
-  return { ok: true, reason: sessionInfo.session };
-}
+// checkSessionTradable now lives in calculations.js (moved so the backtest
+// engine can reuse the exact same logic without duplicating it). Alias
+// kept here so every existing call site below needs zero changes.
+const checkSessionTradable = calc.checkSessionTradable;
 
 // Candle cache — reuse candles across checks instead of fetching every time
 // 1h candles refresh every 60 minutes, 4h every 4 hours, daily every 6 hours
@@ -605,6 +570,35 @@ app.get('/api/live-price', async (req, res) => {
 // a signal" in real time, updated every 1 minute by the confluence check.
 app.get('/api/vote-status', (req, res) => {
   res.json(currentVoteStatus);
+});
+
+// ── Backtest — replays real historical candles through the exact live
+// signal logic to get a measured win rate, instead of guessing.
+// Fetches ~4 months of real MT5 candles across all three timeframes,
+// then walks forward through them. Can take 10-30+ seconds to run since
+// it's evaluating the full indicator stack at every historical hour.
+app.get('/api/backtest', async (req, res) => {
+  try {
+    console.log('[BACKTEST] Fetching historical candles...');
+    const [candles1h, candles4h, candlesDaily] = await Promise.all([
+      mt5.fetchMT5Candles('1h', 3000).catch(() => null),
+      mt5.fetchMT5Candles('4h', 800).catch(() => null),
+      mt5.fetchMT5Candles('1d', 150).catch(() => null),
+    ]);
+
+    if (!candles1h) {
+      return res.status(500).json({ error: 'Could not fetch historical 1h candles from MT5' });
+    }
+
+    console.log(`[BACKTEST] Got ${candles1h.length} 1h, ${candles4h ? candles4h.length : 0} 4h, ${candlesDaily ? candlesDaily.length : 0} daily candles. Running simulation...`);
+    const results = backtest.runBacktest(candles1h, candles4h, candlesDaily);
+    console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
+
+    res.json(results);
+  } catch (err) {
+    console.error('[BACKTEST] Failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Manual trigger endpoints (useful for testing without waiting for cron)
