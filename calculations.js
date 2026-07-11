@@ -559,13 +559,50 @@ function detectCandlePattern(closes, highs, lows) {
   return {name:'No Pattern', signal:'NEUTRAL'};
 }
 
-function detectSession() {
-  var now = new Date();
+function detectSession(atDate) {
+  var now = atDate || new Date();
   var lebHour = (now.getUTCHours()+3) % 24;
   if (lebHour>=10 && lebHour<19) return { session:'London', confidence:5 };
   if (lebHour>=16 && lebHour<24) return { session:'New York', confidence:4 };
   if (lebHour>=1 && lebHour<10) return { session:'Asian', confidence:-2 };
   return { session:'Quiet', confidence:-5 };
+}
+
+// Combines weekly market closure (weekend) + session tradability + the
+// open/close buffer windows into one check. Moved here from server.js so
+// the backtest engine can reuse the exact same rules live signals use,
+// evaluated against a historical timestamp instead of "now".
+function checkSessionTradable(sessionInfo, atDate) {
+  var now = atDate || new Date();
+  var utcDay = now.getUTCDay(); // 0=Sunday, 5=Friday, 6=Saturday
+  var utcH = now.getUTCHours();
+  var utcM = now.getUTCMinutes();
+
+  if (utcDay === 6) {
+    return { ok: false, reason: 'market closed for the weekend (Saturday)' };
+  }
+  if (utcDay === 0 && utcH < 21) {
+    return { ok: false, reason: 'market closed for the weekend (reopens ~21:00 UTC Sunday)' };
+  }
+  if (utcDay === 5 && utcH >= 21) {
+    return { ok: false, reason: 'market closed for the weekend (closed ~21:00 UTC Friday)' };
+  }
+
+  if (sessionInfo.session !== 'London' && sessionInfo.session !== 'New York') {
+    return { ok: false, reason: 'session is ' + sessionInfo.session + ' — only London/New York are tradable' };
+  }
+
+  var minutesIntoHour = utcM;
+
+  if (utcH === 7 && minutesIntoHour < 15) {
+    return { ok: false, reason: 'within 15 min of London open (07:00 UTC) — opening rush, wait for it to settle' };
+  }
+
+  if (utcH === 20 && minutesIntoHour >= 45) {
+    return { ok: false, reason: 'within 15 min of New York close (21:00 UTC) — closing unwind, too erratic' };
+  }
+
+  return { ok: true, reason: sessionInfo.session };
 }
 
 function detectWhale(closes) {
@@ -1240,7 +1277,7 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
 
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
-  calcFearGreed, detectCandlePattern, detectSession, detectWhale, detectStopHunt,
+  calcFearGreed, detectCandlePattern, detectSession, checkSessionTradable, detectWhale, detectStopHunt,
   checkEconEvent, isWithinNewsBlackout, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
   ECON_EVENTS
 };
