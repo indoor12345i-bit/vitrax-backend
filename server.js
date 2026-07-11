@@ -64,13 +64,31 @@ function trackPriceAndCheckFrozen(price) {
 //      isn't really about a new trend forming.
 // Returns { ok: boolean, reason: string } so callers can log exactly why.
 function checkSessionTradable(sessionInfo) {
+  const now = new Date();
+  const utcDay = now.getUTCDay(); // 0=Sunday, 5=Friday, 6=Saturday
+  const utcH = now.getUTCHours();
+  const utcM = now.getUTCMinutes();
+
+  // ── Weekly market closure ──────────────────────────────────────────
+  // Gold/forex closes Friday ~21:00 UTC and doesn't reopen until Sunday
+  // ~21:00-22:00 UTC. This is a HARD, predictable closure — not something
+  // that should wait to be reactively detected by 5 identical prices in
+  // a row. Checking this explicitly prevents ever mistaking a frozen
+  // weekend price for a live, tradeable one.
+  if (utcDay === 6) {
+    return { ok: false, reason: 'market closed for the weekend (Saturday)' };
+  }
+  if (utcDay === 0 && utcH < 21) {
+    return { ok: false, reason: 'market closed for the weekend (reopens ~21:00 UTC Sunday)' };
+  }
+  if (utcDay === 5 && utcH >= 21) {
+    return { ok: false, reason: 'market closed for the weekend (closed ~21:00 UTC Friday)' };
+  }
+
   if (sessionInfo.session !== 'London' && sessionInfo.session !== 'New York') {
     return { ok: false, reason: `session is ${sessionInfo.session} — only London/New York are tradable` };
   }
 
-  const now = new Date();
-  const utcH = now.getUTCHours();
-  const utcM = now.getUTCMinutes();
   const minutesIntoHour = utcM;
 
   // London opens 07:00 UTC — block first 15 minutes
@@ -321,9 +339,32 @@ async function checkHighConfluenceSignal() {
     const currentPrice = mt5Price && mt5Price.price ? mt5Price.price : closes[closes.length - 1];
     const liveCloses = [...closes.slice(0, -1), currentPrice];
 
-    // ── Market freeze check — skip if price hasn't moved (market closed) ──
+    // ── Market hours check — runs EVERY cycle, not just when a signal is
+    // about to fire. Catches the weekly close (Fri evening–Sun evening)
+    // immediately and clearly, instead of only reacting once 6+ votes
+    // happen to line up. Critically: also clears currentVoteStatus so the
+    // dashboard's "building" widget doesn't sit frozen on stale numbers
+    // from before the market closed.
+    const earlySessionInfo = calc.detectSession();
+    const earlySessionCheck = checkSessionTradable(earlySessionInfo);
+    if (!earlySessionCheck.ok) {
+      console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${earlySessionCheck.reason} — skipping`);
+      currentVoteStatus = {
+        direction: null, votes: 0, against: 0, threshold: 6,
+        blockedReason: earlySessionCheck.reason, updatedAt: new Date().toISOString(),
+      };
+      return;
+    }
+
+    // ── Market freeze check — skip if price hasn't moved (unexpected
+    // closure like a holiday, or a feed hiccup — not covered by the
+    // day/hour calendar check above) ──
     if (trackPriceAndCheckFrozen(currentPrice)) {
       console.log(`[SCAN] $${currentPrice.toFixed(2)} — market appears CLOSED (frozen price) — skipping`);
+      currentVoteStatus = {
+        direction: null, votes: 0, against: 0, threshold: 6,
+        blockedReason: 'price feed frozen — market likely closed', updatedAt: new Date().toISOString(),
+      };
       return;
     }
 
