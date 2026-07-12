@@ -208,25 +208,6 @@ function calcPriceActionPattern(closes, highs, lows) {
 
 // ════════════════════════════════════════════════════════════════════════
 // SUPPORT AND RESISTANCE DETECTION
-//
-// Identifies key price levels where gold has historically reversed.
-// These are the "walls" that signals can run into before hitting TP.
-//
-// How it works:
-//   1. Look at the last 100 candles (highs and lows)
-//   2. Find clusters of highs/lows that appear close to each other
-//      (within a "zone" of 0.3x ATR)
-//   3. A level is significant if price touched it 2+ times
-//   4. Classify each level as support (below current price) or
-//      resistance (above current price)
-//   5. Check if a key level sits between entry and TP — this is danger
-//
-// Returns:
-//   nearestResistance — closest resistance above current price
-//   nearestSupport    — closest support below current price
-//   resistanceBetweenTP — true if resistance sits between price and TP
-//   supportBetweenTP    — true if support sits between price and TP (for SELL)
-//   strength           — how many times price has tested the nearest level
 // ════════════════════════════════════════════════════════════════════════
 function calcSupportResistance(closes, highs, lows, currentPrice, atr) {
   if (!closes || closes.length < 20 || !atr) return null;
@@ -234,29 +215,22 @@ function calcSupportResistance(closes, highs, lows, currentPrice, atr) {
   var zoneSize = atr * 0.3; // levels within this distance are the same zone
   var levels = [];
 
-  // Collect significant swing highs and lows
-  // A swing high is a candle where the high is higher than surrounding candles
-  // A swing low is a candle where the low is lower than surrounding candles
   for (var i = 2; i < highs.length - 2; i++) {
-    // Swing high
     if (highs[i] > highs[i-1] && highs[i] > highs[i-2] &&
         highs[i] > highs[i+1] && highs[i] > highs[i+2]) {
       levels.push({ price: highs[i], type: 'resistance' });
     }
-    // Swing low
     if (lows[i] < lows[i-1] && lows[i] < lows[i-2] &&
         lows[i] < lows[i+1] && lows[i] < lows[i+2]) {
       levels.push({ price: lows[i], type: 'support' });
     }
   }
 
-  // Cluster nearby levels into zones
   var zones = [];
   levels.forEach(function(level) {
     var found = false;
     for (var j = 0; j < zones.length; j++) {
       if (Math.abs(zones[j].price - level.price) <= zoneSize) {
-        // Merge into existing zone — average the price
         zones[j].price = (zones[j].price * zones[j].touches + level.price) / (zones[j].touches + 1);
         zones[j].touches++;
         found = true;
@@ -268,19 +242,17 @@ function calcSupportResistance(closes, highs, lows, currentPrice, atr) {
     }
   });
 
-  // Only keep zones touched at least twice (significant levels)
   zones = zones.filter(function(z) { return z.touches >= 2; });
 
   if (zones.length === 0) return null;
 
-  // Find nearest resistance above and support below current price
   var resistance = zones
     .filter(function(z) { return z.price > currentPrice; })
-    .sort(function(a, b) { return a.price - b.price; }); // closest first
+    .sort(function(a, b) { return a.price - b.price; });
 
   var support = zones
     .filter(function(z) { return z.price < currentPrice; })
-    .sort(function(a, b) { return b.price - a.price; }); // closest first
+    .sort(function(a, b) { return b.price - a.price; });
 
   var nearestResistance = resistance.length > 0 ? resistance[0] : null;
   var nearestSupport    = support.length > 0    ? support[0]    : null;
@@ -294,60 +266,29 @@ function calcSupportResistance(closes, highs, lows, currentPrice, atr) {
 
 // ════════════════════════════════════════════════════════════════════════
 // MULTI-TIMEFRAME ANALYSIS (MTF)
-//
-// The single biggest upgrade to the signal system. Instead of only
-// looking at the current short-term price action, MTF checks whether
-// the 4-hour and daily trends agree with the short-term signal direction.
-//
-// Why this matters: a BUY signal on a 1h chart means very little if the
-// 4h and daily charts are both in a clear downtrend. Trading counter-trend
-// is the most common cause of stop-loss hits. MTF filters these out.
-//
-// How it works:
-//   - 4h candles: is the medium-term trend (last 2 days) bullish or bearish?
-//   - Daily candles: is the longer-term trend (last 2 weeks) bullish or bearish?
-//   - Each timeframe votes: +1 for bullish, -1 for bearish, 0 for neutral
-//   - Total MTF score: -2 (both bearish) to +2 (both bullish)
-//
-// Interpretation:
-//   MTF score +2 → both timeframes bullish → strong confirmation for BUY
-//   MTF score +1 → mixed → weak confirmation, use with caution
-//   MTF score  0 → neutral → no MTF bias either way
-//   MTF score -1 → mixed → weak confirmation for SELL
-//   MTF score -2 → both timeframes bearish → strong confirmation for SELL
-//
-// A BUY signal with MTF score +2 gets full confidence boost.
-// A BUY signal with MTF score -2 gets a significant confidence penalty
-// because it's trading directly against both higher timeframes.
 // ════════════════════════════════════════════════════════════════════════
 function calcMTF(candles4h, candlesDaily) {
   var mtfScore = 0;
   var mtfReasons = [];
 
-  // ── 4-Hour Trend Analysis ─────────────────────────────────────────────
   if (candles4h && candles4h.length >= 20) {
     var closes4h = candles4h.map(function(c) { return c.close; });
-    var highs4h  = candles4h.map(function(c) { return c.high; });
-    var lows4h   = candles4h.map(function(c) { return c.low; });
     var price4h  = closes4h[closes4h.length - 1];
 
-    // EMA trend on 4h
     var ema104h = ema(closes4h, 10);
     var ema204h = ema(closes4h, 20);
     var e10v = ema104h[ema104h.length - 1];
     var e20v = ema204h[ema204h.length - 1];
 
-    // RSI on 4h
     var rsi4hArr = rsi(closes4h, 14);
     var rsi4h = rsi4hArr[rsi4hArr.length - 1] || 50;
 
-    // MACD on 4h
     var macd4h = macd(closes4h);
     var hist4h = macd4h.hist[macd4h.hist.length - 1];
 
     var votes4h = 0;
-    if (price4h > e10v && e10v > e20v) { votes4h++; }   // bullish trend
-    else if (price4h < e10v && e10v < e20v) { votes4h--; } // bearish trend
+    if (price4h > e10v && e10v > e20v) { votes4h++; }
+    else if (price4h < e10v && e10v < e20v) { votes4h--; }
     if (rsi4h > 55) { votes4h++; }
     else if (rsi4h < 45) { votes4h--; }
     if (hist4h > 0) { votes4h++; }
@@ -364,11 +305,8 @@ function calcMTF(candles4h, candlesDaily) {
     }
   }
 
-  // ── Daily Trend Analysis ──────────────────────────────────────────────
   if (candlesDaily && candlesDaily.length >= 14) {
     var closesD = candlesDaily.map(function(c) { return c.close; });
-    var highsD  = candlesDaily.map(function(c) { return c.high; });
-    var lowsD   = candlesDaily.map(function(c) { return c.low; });
     var priceD  = closesD[closesD.length - 1];
 
     var ema7d  = ema(closesD, 7);
@@ -379,28 +317,20 @@ function calcMTF(candles4h, candlesDaily) {
     var rsiDArr = rsi(closesD, 14);
     var rsiD = rsiDArr[rsiDArr.length - 1] || 50;
 
-    // 5-day trend: is price lower than 5 days ago?
     var close5ago = closesD[closesD.length - 6] || closesD[0];
     var weekTrend = priceD > close5ago ? 1 : -1;
 
-    // 10-day trend: broader look at direction
     var close10ago = closesD[closesD.length - 11] || closesD[0];
     var tenDayTrend = priceD > close10ago ? 1 : -1;
 
     var votesD = 0;
-    // EMA alignment
     if (priceD > e7v && e7v > e14v) { votesD++; }
     else if (priceD < e7v && e7v < e14v) { votesD--; }
-    // RSI bias
     if (rsiD > 55) { votesD++; }
     else if (rsiD < 45) { votesD--; }
-    // 5-day price direction
     votesD += weekTrend;
-    // 10-day price direction (extra weight for sustained trends)
     votesD += tenDayTrend;
 
-    // Lower threshold from 2 to 2 votes but with 4 possible votes now
-    // BEARISH needs 2 of 4 votes negative (50% agreement)
     if (votesD >= 2) {
       mtfScore++;
       mtfReasons.push('Daily trend: BULLISH');
@@ -415,45 +345,26 @@ function calcMTF(candles4h, candlesDaily) {
   return { score: mtfScore, reasons: mtfReasons };
 }
 
-//
-// AVWAP = Σ(typical_price × volume) / Σ(volume)
-// where typical_price = (high + low + close) / 3
-//
-// Requires real OHLCV candle data with volume, which we pull from
-// PrimaCapital's MT5 feed via MetaApi. Website-based APIs don't
-// provide volume, so this only runs when MT5 candle data is available.
-//
-// Interpretation:
-//   price > AVWAP → buyers in control since daily open → bullish bias
-//   price < AVWAP → sellers in control since daily open → bearish bias
-//
-// Used as a confirmation filter: a BUY signal above AVWAP is more
-// reliable than one below it (not fighting institutional average).
-// ════════════════════════════════════════════════════════════════════════
 function calcAVWAP(candles) {
   if (!candles || candles.length === 0) return null;
 
-  // Anchor to start of current UTC trading day
   var now = new Date();
   var dayStart = new Date(Date.UTC(
     now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()
   ));
 
-  // Only use candles from today's session
   var todayCandles = candles.filter(function(c) {
     return new Date(c.time) >= dayStart;
   });
 
   if (todayCandles.length === 0) {
-    // If no candles yet today (market just opened), use last 20 candles
-    // as a rolling approximation rather than returning null entirely
     todayCandles = candles.slice(-20);
   }
 
   var sumTPV = 0, sumVol = 0;
   todayCandles.forEach(function(c) {
     var typicalPrice = (c.high + c.low + c.close) / 3;
-    var vol = c.volume || 1; // volume always >= 1 to avoid division issues
+    var vol = c.volume || 1;
     sumTPV += typicalPrice * vol;
     sumVol += vol;
   });
@@ -482,13 +393,8 @@ function calcDynamicLevels(cur, sig, atr, rsiV, tp1Override, tp2Override) {
   else if (rsiV > 75 && sig === 'SELL') { slMultiplier = 0.4; }
   else if (rsiV > 45 && rsiV < 55) { slMultiplier = 0.6; }
 
-  // SL — unchanged, ATR-based
   var slDist = Math.max(Math.min(+(atr*slMultiplier).toFixed(2), 50), 5);
-
-  // TP1 — defaults to $7 (current live value), overridable for backtesting
   var tp1Dist = tp1Override || 7;
-
-  // TP2 — defaults to $18 (current live value), overridable for backtesting
   var tp2Dist = tp2Override || 18;
 
   var tp1, tp2, sl;
@@ -503,7 +409,7 @@ function calcDynamicLevels(cur, sig, atr, rsiV, tp1Override, tp2Override) {
   }
 
   return {
-    tp: tp1,       // backwards compat — tp still points to TP1
+    tp: tp1,
     tp1: tp1,
     tp2: tp2,
     sl: sl,
@@ -511,7 +417,7 @@ function calcDynamicLevels(cur, sig, atr, rsiV, tp1Override, tp2Override) {
     slDist: slDist,
     tp1Dist: tp1Dist,
     tp2Dist: tp2Dist,
-    rr: +(tp2Dist / slDist).toFixed(1) // RR based on TP2
+    rr: +(tp2Dist / slDist).toFixed(1)
   };
 }
 
@@ -568,13 +474,9 @@ function detectSession(atDate) {
   return { session:'Quiet', confidence:-5 };
 }
 
-// Combines weekly market closure (weekend) + session tradability + the
-// open/close buffer windows into one check. Moved here from server.js so
-// the backtest engine can reuse the exact same rules live signals use,
-// evaluated against a historical timestamp instead of "now".
 function checkSessionTradable(sessionInfo, atDate) {
   var now = atDate || new Date();
-  var utcDay = now.getUTCDay(); // 0=Sunday, 5=Friday, 6=Saturday
+  var utcDay = now.getUTCDay();
   var utcH = now.getUTCHours();
   var utcM = now.getUTCMinutes();
 
@@ -624,31 +526,13 @@ function detectStopHunt(closes, lows) {
   return spikedBelow && recovered;
 }
 
-// ════════════════════════════════════════════════════════════════════════
-// ECONOMIC CALENDAR — requires MONTHLY manual maintenance
-//
-// There is no live economic-calendar API wired into this system. These
-// dates were verified against BLS/BEA/Fed sources on July 10, 2026 for
-// July 2026 specifically. They will NOT auto-update for future months —
-// whoever maintains this needs to check bls.gov/schedule and the Fed's
-// FOMC calendar at the start of each month and update this array, or
-// checkEconEvent() will simply find nothing and the blackout won't fire
-// (safe failure — it just stops protecting against news, doesn't create
-// a false positive).
-//
-// Verified corrections made July 10, 2026 — the previous version of this
-// list had THREE confirmed wrong dates (CPI was 4 days off, NFP was 2 days
-// off, Fed decision was 12 days off). GDP and PCE dates below could not be
-// confirmed with full certainty and are marked accordingly — treat their
-// blackout as a bonus, not a guarantee.
-// ════════════════════════════════════════════════════════════════════════
 var ECON_EVENTS = [
   {year:2026, day:1,  month:7, time:'14:00', name:'US ISM Manufacturing PMI',   impact:'HIGH',     goldEffect:'bearish if strong'},
-  {year:2026, day:2,  month:7, time:'12:30', name:'US Non-Farm Payrolls (NFP)', impact:'HIGH',     goldEffect:'bearish if strong'}, // verified: moved up from usual 1st-Friday due to July 4 holiday
-  {year:2026, day:14, month:7, time:'12:30', name:'US CPI Inflation',          impact:'HIGH',     goldEffect:'bullish if high'},  // verified against BLS: 8:30am ET
-  {year:2026, day:25, month:7, time:'12:30', name:'US Core PCE Inflation',     impact:'HIGH',     goldEffect:'bullish if high'},  // best-available estimate, not fully confirmed
-  {year:2026, day:29, month:7, time:'18:00', name:'Fed Interest Rate Decision', impact:'CRITICAL', goldEffect:'bearish if hike'},  // verified: FOMC meets 28-29th, decision announced 2nd day
-  {year:2026, day:30, month:7, time:'12:30', name:'US GDP Growth (Q2 advance)', impact:'HIGH',     goldEffect:'bearish if strong'}, // best-available estimate, not fully confirmed
+  {year:2026, day:2,  month:7, time:'12:30', name:'US Non-Farm Payrolls (NFP)', impact:'HIGH',     goldEffect:'bearish if strong'},
+  {year:2026, day:14, month:7, time:'12:30', name:'US CPI Inflation',          impact:'HIGH',     goldEffect:'bullish if high'},
+  {year:2026, day:25, month:7, time:'12:30', name:'US Core PCE Inflation',     impact:'HIGH',     goldEffect:'bullish if high'},
+  {year:2026, day:29, month:7, time:'18:00', name:'Fed Interest Rate Decision', impact:'CRITICAL', goldEffect:'bearish if hike'},
+  {year:2026, day:30, month:7, time:'12:30', name:'US GDP Growth (Q2 advance)', impact:'HIGH',     goldEffect:'bearish if strong'},
 ];
 
 function checkEconEvent() {
@@ -658,11 +542,6 @@ function checkEconEvent() {
   });
 }
 
-// ── News blackout window ──────────────────────────────────────────────
-// Returns true if we're within `windowMinutes` of a scheduled event's
-// exact release time (not just "same day" — same day but 8 hours away
-// from the release shouldn't be blocked, only the volatile window
-// right around the actual release).
 function isWithinNewsBlackout(windowMinutes) {
   var event = checkEconEvent();
   if (!event) return { blocked: false };
@@ -708,11 +587,6 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   if (p<=lower) { score+=2; reasons.push('Price at lower Bollinger'); }
   else if (p>=upper) { score-=2; reasons.push('Price at upper Bollinger'); }
 
-  // ── AVWAP (Anchored VWAP) — only when real MT5 candle data is available ──
-  // Price above daily AVWAP = buyers in control since daily open = bullish
-  // Price below daily AVWAP = sellers in control since daily open = bearish
-  // Acts as a confirmation filter: BUY above AVWAP is more reliable than
-  // BUY below it, since we'd be trading WITH institutional order flow.
   var avwapValue = candles ? calcAVWAP(candles) : null;
   if (avwapValue !== null) {
     if (p > avwapValue) {
@@ -724,10 +598,6 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     }
   }
 
-  // ── Volume Profile ────────────────────────────────────────────────────
-  // Point of Control (POC) = price level with most volume traded
-  // Price above POC = buyers have dominated the full period
-  // Price below POC = sellers have dominated
   var vpResult = calcVolumeProfile(candles);
   if (vpResult) {
     var poc = vpResult.poc;
@@ -744,9 +614,6 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     }
   }
 
-  // ── Price Action Pattern ──────────────────────────────────────────────
-  // Multi-candle patterns with 65-75% standalone win rates
-  // Weighted heavily when they form at S&R levels
   var paPattern = calcPriceActionPattern(closes, highs, lows);
   if (paPattern.strength >= 2) {
     if (paPattern.signal === 'BUY') {
@@ -760,18 +627,14 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     reasons.push('Price Action: ' + paPattern.name);
   }
 
-  // ── Support & Resistance ──────────────────────────────────────────────
-  // Check if a key level sits between current price and take profit.
-  // If resistance blocks a BUY or support blocks a SELL, reduce score
-  // and confidence — price will likely struggle to reach TP.
+  var atrValue = calcATR(closes, highs, lows, 14);
   var srResult = calcSupportResistance(closes, highs, lows, p, atrValue);
   var srReason = null;
   if (srResult) {
-    var tp1Dist = atrValue; // approximate TP1 distance
+    var tp1Dist = atrValue;
     var nearR = srResult.nearestResistance;
     var nearS = srResult.nearestSupport;
 
-    // For BUY: check if resistance sits between price and TP1
     if (nearR && nearR.price < p + tp1Dist) {
       var distToR = (nearR.price - p).toFixed(2);
       if (nearR.touches >= 3) {
@@ -783,7 +646,6 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
         reasons.push('S&R: ' + srReason);
       }
     }
-    // For SELL: check if support sits between price and TP1
     else if (nearS && nearS.price > p - tp1Dist) {
       var distToS = (p - nearS.price).toFixed(2);
       if (nearS.touches >= 3) {
@@ -795,26 +657,18 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
         reasons.push('S&R: ' + srReason);
       }
     }
-    // Clear path to TP — no significant level blocking the way
     else {
       if (nearR) reasons.push('S&R: Clear path to TP — next resistance at $' + nearR.price.toFixed(2));
       else if (nearS) reasons.push('S&R: Clear path to TP — nearest support at $' + nearS.price.toFixed(2));
     }
   }
 
-  // ── MTF (Multi-Timeframe Analysis) ───────────────────────────────────
-  // Stronger filter than before — the daily trend now has veto power.
-  // If daily is bearish and we're generating a BUY, that's counter-trend
-  // trading which is the main cause of SL hits in a downtrending market.
   var mtfResult = calcMTF(candles4h, candlesDaily);
   var mtfScore = mtfResult.score;
   var mtfReasons = mtfResult.reasons;
 
-  // Check daily trend specifically for the veto filter
   var dailyBearish = mtfReasons.some(function(r) { return r.indexOf('Daily trend: BEARISH') !== -1; });
   var dailyBullish = mtfReasons.some(function(r) { return r.indexOf('Daily trend: BULLISH') !== -1; });
-  var h4Bearish = mtfReasons.some(function(r) { return r.indexOf('4H trend: BEARISH') !== -1; });
-  var h4Bullish = mtfReasons.some(function(r) { return r.indexOf('4H trend: BULLISH') !== -1; });
 
   if (mtfScore >= 2) {
     score += 2;
@@ -832,21 +686,15 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     reasons.push('MTF neutral: ' + mtfReasons.join(' | '));
   }
 
-  // ── Daily trend veto — prevent counter-trend signals ─────────────
-  // If the DAILY trend is bearish, suppress any BUY signal to WAIT.
-  // The daily trend is the most important timeframe — trading against
-  // it is the primary cause of stop loss hits in downtrending markets.
-  // We don't require 4H to also be bearish — daily alone is enough.
   if (dailyBearish) {
     if (score > 0) {
-      score = -1; // force to WAIT territory
+      score = -1;
       reasons.push('⛔ BUY suppressed — daily trend is BEARISH. Wait for trend to turn bullish.');
     }
   }
-  // If daily is bullish, suppress SELL signals
   if (dailyBullish) {
     if (score < 0) {
-      score = 1; // force to WAIT territory
+      score = 1;
       reasons.push('⛔ SELL suppressed — daily trend is BULLISH. Wait for trend to turn bearish.');
     }
   }
@@ -858,7 +706,6 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   else if (score<=-2) { label='SELL'; dir='SHORT'; strength='MODERATE'; }
   else { label='WAIT'; dir='NEUTRAL'; }
 
-  var atrValue = calcATR(closes, highs, lows, 14);
   var levels = calcDynamicLevels(p, label, atrValue, rsiV);
   var fgScore = calcFearGreed(closes, rsiV, bollData, macdData);
   var pattern = detectCandlePattern(closes, highs, lows);
@@ -876,24 +723,17 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
   adj += sessionInfo.confidence;
   if (pattern.signal===label) adj+=4;
 
-  // Volume Profile confidence boost
-  // Price well above/below Value Area = strong institutional conviction
   if (vpResult) {
     if ((label==='BUY' && p > vpResult.vaHigh) || (label==='SELL' && p < vpResult.vaLow)) adj+=6;
     else if ((label==='BUY' && p > vpResult.poc) || (label==='SELL' && p < vpResult.poc)) adj+=3;
     else if ((label==='BUY' && p < vpResult.poc) || (label==='SELL' && p > vpResult.poc)) adj-=5;
   }
 
-  // Price Action Pattern confidence boost
-  // Strong patterns (engulfing, strength 3) get bigger boost
   if (paPattern.signal === label) {
     adj += paPattern.strength === 3 ? 8 : paPattern.strength === 2 ? 5 : 2;
   } else if (paPattern.signal !== 'NEUTRAL' && paPattern.signal !== label) {
-    adj -= paPattern.strength * 3; // opposing pattern reduces confidence
+    adj -= paPattern.strength * 3;
   }
-  // S&R confidence adjustment
-  // Strong blocking level with 3+ touches = significant penalty
-  // Clear path to TP = small boost
   if (srResult) {
     var nearR2 = srResult.nearestResistance;
     var nearS2 = srResult.nearestSupport;
@@ -903,16 +743,14 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     } else if (label === 'SELL' && nearS2 && nearS2.price > p - tp1D) {
       adj -= nearS2.touches >= 3 ? 10 : 5;
     } else {
-      adj += 3; // clear path bonus
+      adj += 3;
     }
   }
 
-  // AVWAP confirmation boosts confidence when aligned, reduces when against
   if (avwapValue !== null) {
     if ((label==='BUY' && p > avwapValue) || (label==='SELL' && p < avwapValue)) adj+=5;
     else if ((label==='BUY' && p < avwapValue) || (label==='SELL' && p > avwapValue)) adj-=7;
   }
-  // MTF confidence adjustment — strongest modifier in the system
   if (mtfScore >= 2) {
     if ((label==='BUY' && mtfScore > 0) || (label==='SELL' && mtfScore < 0)) adj += 10;
     else adj -= 15;
@@ -927,8 +765,6 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
     else adj -= 15;
   }
 
-  // Extra penalty if daily trend opposes signal direction
-  // This is the specific fix for the BUY-in-downtrend problem
   if (dailyBearish && label === 'BUY') adj -= 12;
   if (dailyBullish && label === 'SELL') adj -= 12;
   var confidence = Math.min(85, Math.max(30, Math.round(base+adj)));
@@ -945,59 +781,41 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// EMERGENCY CHECK
-// ════════════════════════════════════════════════════════════════════════
-// ════════════════════════════════════════════════════════════════════════
 // HIGH CONFLUENCE DETECTOR — runs every 5 minutes, independent of news
 //
-// This is different from checkEmergencyTrigger (which detects unusual
-// price SPIKES). This detects when the technical picture is so strongly
-// aligned in one direction across multiple independent indicator groups
-// that the probability of a meaningful move is very high.
-//
-// The "85% chance" is represented by requiring ALL of these to agree:
-//   Group 1 — Trend: EMA position + crossover + MTF
-//   Group 2 — Momentum: RSI + MACD + Stochastic all pointing same way
-//   Group 3 — Structure: Bollinger position + AVWAP side
-//   Group 4 — Context: ATR above minimum (market is moving, not dead)
-//
-// All four groups must agree on the same direction. This is extremely
-// rare — when it happens, it represents genuine multi-layer confluence
-// that has historically preceded strong directional moves.
+// ── UPDATE: optional directionFilter param ──────────────────────────────
+// Added so the backtest can test a SELL-only (or BUY-only) configuration
+// properly — i.e. the filtered-out direction never fires at all, so it
+// correctly doesn't consume the 30-min cooldown either. This is deliberately
+// NOT wired into the live signal loop in server.js; it only exists so the
+// backtest can measure what a direction-restricted config would really do,
+// with real cooldown behavior, before anyone decides to run it live.
 // ════════════════════════════════════════════════════════════════════════
-function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override) {
-  var threshold = voteThreshold || 6; // defaults to 6 — matches live behavior exactly unless overridden
+function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override, directionFilter) {
+  var threshold = voteThreshold || 6;
   if (!closes || closes.length < 30) return null;
 
   var p = closes[closes.length - 1];
   var atrVal = calcATR(closes, highs, lows, 14);
 
-  // Minimum ATR — market must be active enough to trade.
-  // Reverted from 8 back to 5 on July 11 — unlike the session/spread/
-  // news filters (which only apply once votes already reach 6), this one
-  // blocks votes from reaching 6 in the first place. Combined with all
-  // the other new filters, 8 was very likely too restrictive.
   if (atrVal < 5) return null;
 
   var reasons = [];
   var bullVotes = 0, bearVotes = 0;
 
-  // ── Group 1: Trend indicators ────────────────────────────────────
   var e14arr = ema(closes, 14), e25arr = ema(closes, 25);
   var e14v = e14arr[e14arr.length - 1];
   var e25v = e25arr[e25arr.length - 1];
 
-  if (p > e14v) bullVotes++; else bearVotes++;       // price vs EMA14
-  if (e14v > e25v) bullVotes++; else bearVotes++;    // golden/death cross
+  if (p > e14v) bullVotes++; else bearVotes++;
+  if (e14v > e25v) bullVotes++; else bearVotes++;
 
-  // MTF trend
   var mtf = calcMTF(candles4h, candlesDaily);
   if (mtf.score >= 2) { bullVotes += 2; reasons.push('MTF strongly bullish'); }
   else if (mtf.score <= -2) { bearVotes += 2; reasons.push('MTF strongly bearish'); }
   else if (mtf.score === 1) bullVotes++;
   else if (mtf.score === -1) bearVotes++;
 
-  // ── Group 2: Momentum indicators ─────────────────────────────────
   var rsiArr = rsi(closes, 14);
   var rsiV = rsiArr[rsiArr.length - 1] || 50;
 
@@ -1022,7 +840,6 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   else if (kv < 50) bullVotes++;
   else bearVotes++;
 
-  // ── Group 3: Structure indicators ────────────────────────────────
   var bollData = bollinger(closes, 20);
   var upper = bollData.upper[bollData.upper.length - 1];
   var lower = bollData.lower[bollData.lower.length - 1];
@@ -1037,37 +854,36 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
     else { bearVotes++; reasons.push('Below AVWAP ($' + avwap + ')'); }
   }
 
-  // ── Group 4: Additional filters ───────────────────────────────────
-  // Whale detection — if whale is buying/selling, it adds confirmation
   var whale = detectWhale(closes);
   if (!whale) {
-    // No whale manipulation — clean signal, slight boost to leading side
     if (bullVotes > bearVotes) bullVotes++;
     else if (bearVotes > bullVotes) bearVotes++;
   }
 
-  // Choppiness filter — don't fire in ranging markets
   if (choppy(closes)) return null;
 
-  // ── Decision: require overwhelming agreement ───────────────────────
-  // Total possible votes: ~10 (trend x4, momentum x3, structure x2, whale x1)
-  // Require at least 8 on one side and 2 or fewer on the other
-  // This represents ~80% of all indicators pointing the same way simultaneously
   var totalVotes = bullVotes + bearVotes;
   var dominantSide = bullVotes > bearVotes ? 'BUY' : 'SELL';
   var dominantVotes = Math.max(bullVotes, bearVotes);
   var minorityVotes = Math.min(bullVotes, bearVotes);
 
-  // Must have at least `threshold` votes on dominant side and no more than
-  // 3 against. Defaults to 6 (current live setting), but the backtest can
-  // pass any value to directly compare thresholds against real history
-  // instead of changing live settings and waiting days to see what happens.
   if (dominantVotes < threshold || minorityVotes > 3) {
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true };
   }
 
-  // Must have at least 2 named reasons (specific meaningful conditions)
   if (reasons.length < 2) return null;
+
+  // ── Direction filter (backtest-only feature) ─────────────────────────
+  // If the caller asked for a specific direction only ('BUY' or 'SELL'),
+  // and this setup is the OTHER direction, treat it exactly like a
+  // below-threshold miss: no signal fires, no cooldown gets consumed.
+  // This is what makes a "SELL-only" backtest a true simulation of that
+  // config, instead of just filtering out BUY rows after the fact from a
+  // run where BUY signals still silently ate cooldown windows that a real
+  // SELL-only config would have left open for another SELL to use instead.
+  if (directionFilter && dominantSide !== directionFilter) {
+    return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, directionFiltered: true };
+  }
 
   var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override, tp2Override);
   var confidence = Math.min(85, 65 + (dominantVotes - threshold) * 5 - (minorityVotes * 3));
@@ -1087,26 +903,9 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   };
 }
 
-// ════════════════════════════════════════════════════════════════════════
-// CANDLE SPIKE DETECTOR
-//
-// Detects when a single candle moves more than 2x ATR — indicating a
-// major event like NFP, Fed decision, or geopolitical news.
-// Unlike the regular emergency trigger which compares close-to-close,
-// this looks at the actual candle BODY (open to close) and RANGE
-// (high to low) to catch intra-candle spikes immediately.
-//
-// Bypasses the daily trend veto — if gold moves $70 in one candle,
-// that IS the new trend regardless of what yesterday's candles said.
-//
-// Fires with direction of the spike:
-//   Big green candle (close > open by 2x ATR) → BUY momentum
-//   Big red candle   (open > close by 2x ATR) → SELL momentum
-// ════════════════════════════════════════════════════════════════════════
 function checkCandleSpike(candles, currentPrice) {
   if (!candles || candles.length < 5) return null;
 
-  // Get the most recent completed candle and the one before it
   var latestCandle = candles[candles.length - 1];
   var prevCandle   = candles[candles.length - 2];
 
@@ -1117,17 +916,14 @@ function checkCandleSpike(candles, currentPrice) {
 
   if (!atr || atr <= 0) return null;
 
-  // Measure the candle body (open to close distance)
-  // Use previous close as the open proxy since MT5 candles may not have open
   var candleBody  = Math.abs(latestCandle.close - prevCandle.close);
   var candleRange = latestCandle.high - latestCandle.low;
   var isBullish   = latestCandle.close > prevCandle.close;
 
-  // Threshold: candle body must be 2.5x ATR (exceptional, not just large)
   var spikeThreshold = atr * 2.5;
 
   if (candleBody < spikeThreshold && candleRange < spikeThreshold * 1.2) {
-    return null; // not a spike
+    return null;
   }
 
   var direction = isBullish ? 'BUY' : 'SELL';
@@ -1155,7 +951,7 @@ function checkCandleSpike(candles, currentPrice) {
 }
 
 function checkEmergencyTrigger(closes, highs, lows, candles) {
-  if (!closes || closes.length < 8) return null; // need more history for confirmation
+  if (!closes || closes.length < 8) return null;
 
   var price = closes[closes.length-1];
   var prevPrice = closes[closes.length-2];
@@ -1168,28 +964,21 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
   var macdData = macd(closes);
   var fgScore = calcFearGreed(closes, rsiV, bollData, macdData);
 
-  // ── CHANGE 1: Raised threshold from 0.8x ATR to 2x ATR ──────────────
-  // A move of 0.8x ATR is essentially a normal candle. We only want to
-  // fire on genuinely exceptional moves - 2x ATR is a real, unusual spike.
   if (priceMove > atrVal * 2.0) {
     reasons.push('Large price move: $' + priceMove.toFixed(2));
     emergencyScore += 30;
     sig = price > prevPrice ? 'BUY' : 'SELL';
   }
 
-  // ── CHANGE 2: Multi-candle confirmation ──────────────────────────────
-  // A single candle breaking a level proves nothing - require the price
-  // to have held the direction consistently over the last 3 candles before
-  // calling it a genuine breakout rather than a spike reversal.
-  var last3 = closes.slice(-4); // 4 candles: 3 moves
+  var last3 = closes.slice(-4);
   var allUp = last3.every(function(c, i) { return i === 0 || c >= last3[i-1]; });
   var allDown = last3.every(function(c, i) { return i === 0 || c <= last3[i-1]; });
 
-  if (rsiV > 85) { // Raised from 80 to 85 - truly extreme only
+  if (rsiV > 85) {
     reasons.push('RSI extremely overbought (' + rsiV.toFixed(1) + ')');
     emergencyScore += 25;
     sig = sig || 'SELL';
-  } else if (rsiV < 15) { // Raised from 20 to 15
+  } else if (rsiV < 15) {
     reasons.push('RSI extremely oversold (' + rsiV.toFixed(1) + ')');
     emergencyScore += 25;
     sig = sig || 'BUY';
@@ -1198,28 +987,24 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
   var upper = bollData.upper[bollData.upper.length-1];
   var lower = bollData.lower[bollData.lower.length-1];
 
-  // ── CHANGE 3: Require directional confirmation for Bollinger breaks ──
-  // Price breaking above upper band while 3 consecutive candles are rising
-  // is more reliable than a single candle spike above the band.
   if (price > upper && allUp) {
     reasons.push('Confirmed break above Bollinger upper (3 candles up)');
     emergencyScore += 25;
-    sig = sig || 'SELL'; // overbought - potential reversal sell
+    sig = sig || 'SELL';
   } else if (price < lower && allDown) {
     reasons.push('Confirmed break below Bollinger lower (3 candles down)');
     emergencyScore += 25;
-    sig = sig || 'BUY'; // oversold - potential reversal buy
+    sig = sig || 'BUY';
   } else if (price > upper || price < lower) {
-    // Single-candle Bollinger break without confirmation - much lower weight
     reasons.push('Bollinger break (unconfirmed - single candle)');
-    emergencyScore += 8; // was 25, now only counts minimally
+    emergencyScore += 8;
   }
 
-  if (fgScore <= 10) { // Raised from 15 to 10
+  if (fgScore <= 10) {
     reasons.push('Extreme fear index (' + fgScore + ')');
     emergencyScore += 15;
     sig = sig || 'BUY';
-  } else if (fgScore >= 90) { // Raised from 85 to 90
+  } else if (fgScore >= 90) {
     reasons.push('Extreme greed index (' + fgScore + ')');
     emergencyScore += 15;
     sig = sig || 'SELL';
@@ -1232,24 +1017,9 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
     sig = sig || (criticalEvent.goldEffect.indexOf('bullish') !== -1 ? 'BUY' : 'SELL');
   }
 
-  // ── CHANGE 4: Raised minimum threshold from 45 to 75 ─────────────────
-  // The old threshold (45) fired on just a price move + Bollinger break
-  // happening simultaneously on the same spike - exactly the fake-out
-  // pattern we kept seeing. 75 requires genuinely multiple independent
-  // conditions to align, not two things caused by the same single candle.
-  //
-  // Also require at least 3 distinct reasons (not just 2) before firing.
   if (emergencyScore >= 75 && sig && reasons.length >= 3) {
     var levels = calcDynamicLevels(price, sig, atrVal, rsiV);
 
-    // ── AVWAP directional filter ──────────────────────────────────────
-    // If we have real MT5 candle data, check that the emergency signal
-    // direction agrees with the daily AVWAP. A BUY signal when price is
-    // below AVWAP (fighting institutional sellers) is significantly less
-    // reliable than one where price is above AVWAP (going with them).
-    // We don't block the signal entirely, but reduce confidence sharply
-    // when going against AVWAP, since that's one of the main fake-out
-    // patterns we observed in production.
     var avwapValue = candles ? calcAVWAP(candles) : null;
     var confidence = Math.min(75, 40 + emergencyScore * 0.5);
 
