@@ -172,6 +172,31 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
   const totalClosed = tp1Hits + tp2Hits + slHits;
   const totalPnl = +trades.reduce((sum, t) => sum + t.pnl, 0).toFixed(2);
 
+  // ── Hour-of-day breakdown ─────────────────────────────────────────
+  // Built directly into the tool so it's computed reliably for ANY
+  // sample size, instead of manually re-counting trade-by-trade each
+  // time (which doesn't scale and is error-prone at a few hundred+
+  // trades). Includes a reliability flag per hour so nobody mistakes
+  // a small, noisy sample for a real pattern — under 20 trades in a
+  // given hour isn't enough to trust, no matter how good it looks.
+  const hourlyBreakdown = {};
+  for (let h = 0; h < 24; h++) hourlyBreakdown[h] = { wins: 0, losses: 0 };
+  trades.forEach(t => {
+    const hour = parseInt(t.time.substr(11, 2));
+    if (t.outcome === 'TP1' || t.outcome === 'TP2') hourlyBreakdown[hour].wins++;
+    else hourlyBreakdown[hour].losses++;
+  });
+  const hourlyStats = Object.keys(hourlyBreakdown).map(h => {
+    const { wins, losses } = hourlyBreakdown[h];
+    const total = wins + losses;
+    return {
+      utcHour: parseInt(h),
+      trades: total,
+      winRate: total > 0 ? +((wins / total) * 100).toFixed(1) : null,
+      reliable: total >= 20, // below this, treat as noise, not a real pattern
+    };
+  }).filter(h => h.trades > 0);
+
   return {
     voteThreshold: threshold,
     tp1Used: tp1Override || 7,
@@ -188,6 +213,8 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
     avgPnl: totalClosed > 0 ? +(totalPnl / totalClosed).toFixed(2) : null,
     buySignals: trades.filter(t => t.direction === 'BUY').length,
     sellSignals: trades.filter(t => t.direction === 'SELL').length,
+    hourlyBreakdown: hourlyStats,
+    hourlyBreakdownNote: 'reliable:false means fewer than 20 trades in that hour — treat as noise, not a real pattern, regardless of how the win rate looks',
     skippedByFilter,
     limitations: [
       'Hourly resolution only — live system scans every minute, this cannot see intra-hour setups',
