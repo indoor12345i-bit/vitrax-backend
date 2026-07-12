@@ -593,17 +593,32 @@ app.get('/api/backtest', async (req, res) => {
     const tp2Override = req.query.tp2 ? parseFloat(req.query.tp2) : undefined;
 
     console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}...`);
+
+    let fetchErrors = {};
     const [candles1h, candles4h, candlesDaily] = await Promise.all([
-      mt5.fetchMT5Candles('1h', hours1h).catch(() => null),
-      mt5.fetchMT5Candles('4h', hours4h).catch(() => null),
-      mt5.fetchMT5Candles('1d', hoursDaily).catch(() => null),
+      mt5.fetchMT5Candles('1h', hours1h).catch(err => { fetchErrors.h1 = err.message; return null; }),
+      mt5.fetchMT5Candles('4h', hours4h).catch(err => { fetchErrors.h4 = err.message; return null; }),
+      mt5.fetchMT5Candles('1d', hoursDaily).catch(err => { fetchErrors.daily = err.message; return null; }),
     ]);
 
+    if (Object.keys(fetchErrors).length > 0) {
+      console.error('[BACKTEST] Candle fetch errors:', JSON.stringify(fetchErrors));
+    }
+
     if (!candles1h) {
-      return res.status(500).json({ error: 'Could not fetch historical 1h candles from MT5' });
+      return res.status(500).json({ error: 'Could not fetch historical 1h candles from MT5', details: fetchErrors });
     }
 
     console.log(`[BACKTEST] Got ${candles1h.length} 1h, ${candles4h ? candles4h.length : 0} 4h, ${candlesDaily ? candlesDaily.length : 0} daily candles. Running simulation...`);
+
+    if (!candles4h || !candlesDaily) {
+      return res.status(500).json({
+        error: 'Missing 4h or daily candle data — required for MTF analysis',
+        details: fetchErrors,
+        hint: 'The exact error from MetaApi is in "details" above — likely a candle count or history-length limit at this hours value',
+      });
+    }
+
     const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
