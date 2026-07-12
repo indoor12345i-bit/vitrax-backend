@@ -24,53 +24,32 @@ const PORT = process.env.PORT || 3000;
 let lastEmergencyTime = null; // prevent spamming emergency signals
 
 // ── Live vote status — what the dashboard polls to show "building" progress ──
-// Updated every check cycle (every 1 min) regardless of whether a signal
-// actually fires. This is in-memory only (not persisted to DB) since it's
-// just "current state right now", not historical data worth keeping.
 let currentVoteStatus = {
-  direction: null,      // 'BUY' or 'SELL' — whichever side is currently leading
-  votes: 0,             // votes on the leading side
-  against: 0,           // votes on the opposing side
-  threshold: 6,         // votes needed to reach the threshold
-  blockedReason: null,  // if threshold was reached but a filter stopped it, why
-  updatedAt: null,      // ISO timestamp of last check
+  direction: null,
+  votes: 0,
+  against: 0,
+  threshold: 6,
+  blockedReason: null,
+  updatedAt: null,
 };
 
 // ── Market freeze detection ─────────────────────────────────────────────
-// Gold markets close for holidays (July 4th, Christmas) and for a daily
-// ~1hr break around 21:00-22:00 UTC. When closed, MT5 keeps returning the
-// SAME frozen price. Without this check, the confluence detector would
-// keep firing fake signals against a price that isn't actually moving.
-let recentLivePrices = []; // last 5 raw MT5 prices
+let recentLivePrices = [];
 const FREEZE_CHECK_COUNT = 5;
-const MIN_PRICE_MOVEMENT = 0.02; // if range across last 5 prices is below this, market is frozen
+const MIN_PRICE_MOVEMENT = 0.02;
 
 function trackPriceAndCheckFrozen(price) {
   recentLivePrices.push(price);
   if (recentLivePrices.length > FREEZE_CHECK_COUNT) recentLivePrices.shift();
-  if (recentLivePrices.length < FREEZE_CHECK_COUNT) return false; // not enough data yet
+  if (recentLivePrices.length < FREEZE_CHECK_COUNT) return false;
   const min = Math.min(...recentLivePrices);
   const max = Math.max(...recentLivePrices);
   return (max - min) < MIN_PRICE_MOVEMENT;
 }
 
-// ── Session tradability check ───────────────────────────────────────────
-// Combines two things:
-//   1. Only London/New York sessions are tradable at all (Asian + the
-//      quiet gap are blocked entirely — too little real activity).
-//   2. Even within London/New York, the first and last 15 minutes are
-//      blocked too — the open floods the market with overnight orders
-//      executing at once, and the close has funds unwinding positions
-//      for the day. Both create erratic, misleading price action that
-//      isn't really about a new trend forming.
-// Returns { ok: boolean, reason: string } so callers can log exactly why.
-// checkSessionTradable now lives in calculations.js (moved so the backtest
-// engine can reuse the exact same logic without duplicating it). Alias
-// kept here so every existing call site below needs zero changes.
 const checkSessionTradable = calc.checkSessionTradable;
 
 // Candle cache — reuse candles across checks instead of fetching every time
-// 1h candles refresh every 60 minutes, 4h every 4 hours, daily every 6 hours
 let candleCache = { candles1h: null, candles4h: null, candlesDaily: null };
 let candleCacheTime = { candles1h: 0, candles4h: 0, candlesDaily: 0 };
 const CANDLE_TTL = { candles1h: 15*60*1000, candles4h: 4*60*60*1000, candlesDaily: 6*60*60*1000 };
@@ -109,7 +88,6 @@ async function generateScheduledSignal() {
       return { error: 'No real price data available — all sources failed. Try again shortly.' };
     }
 
-    // Fetch real OHLCV candles from MT5 for AVWAP + MTF calculation
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
     if (candles)      console.log(`[MTF] 1h: ${candles.length} candles`);
     if (candles4h)    console.log(`[MTF] 4h: ${candles4h.length} candles`);
@@ -117,20 +95,6 @@ async function generateScheduledSignal() {
 
     const sig = calc.calcSignal(priceData.closes, priceData.highs, priceData.lows, candles, candles4h, candlesDaily);
 
-    // ── QUALITY GATE ─────────────────────────────────────────────────────
-    // Scheduled signals only fire as BUY or SELL when conditions are
-    // genuinely good. If the gate fails, the signal is saved as WAIT
-    // and the system waits for the next scheduled check.
-    //
-    // Gate conditions for a real BUY or SELL to fire:
-    //   1. Score must be +3 or higher (strict — not just +2)
-    //   2. Confidence must be above 55%
-    //   3. Market must not be choppy
-    //   4. RSI must not be above 78 for BUY (overbought = bad entry)
-    //   5. RSI must not be below 22 for SELL (oversold = bad entry)
-    //   6. Daily trend veto is already handled inside calcSignal
-    //
-    // If gate fails → downgrade to WAIT with reason logged
     if (sig.label !== 'WAIT') {
       const rsiV = parseFloat(sig.rsi);
       const gateReasons = [];
@@ -155,7 +119,6 @@ async function generateScheduledSignal() {
       }
     }
 
-    // Override entry price with real MT5 broker price
     const mt5Price = await mt5.fetchMT5Price().catch(() => null);
     if (mt5Price && mt5Price.price && sig.label !== 'WAIT') {
       const realEntry = mt5Price.price;
@@ -176,7 +139,6 @@ async function generateScheduledSignal() {
     if (sig.mtfScore !== undefined) console.log(`[MTF] Score: ${sig.mtfScore} | ${sig.mtfReasons.join(' | ')}`);
     console.log(`Saved as signal #${saved.id}`);
 
-    // Send Telegram alert — only for real BUY/SELL signals, never for WAIT
     if (sig.label !== 'WAIT') {
       await telegram.sendSignalAlert(sig);
     }
@@ -193,7 +155,6 @@ async function generateScheduledSignal() {
 // ════════════════════════════════════════════════════════════════════════
 async function checkEmergency() {
   try {
-    // Fetch candles for AVWAP + MTF filtering
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
     if (!candles || candles.length < 20) return;
     const closes = candles.map(c => c.close);
@@ -203,9 +164,6 @@ async function checkEmergency() {
     const curP   = mt5P && mt5P.price ? mt5P.price : closes[closes.length-1];
     const liveC  = [...closes.slice(0,-1), curP];
 
-    // ── Candle spike detector — catches NFP/Fed/news moves immediately ──
-    // Fires when a single candle moves 2.5x ATR — bypasses daily veto
-    // because a spike of that size IS the new trend direction
     if (lastEmergencyTime === null || (Date.now() - lastEmergencyTime) > 30 * 60 * 1000) {
       const spike = calc.checkCandleSpike(candles, curP);
       if (spike) {
@@ -234,7 +192,7 @@ async function checkEmergency() {
         console.log('🚀 Spike signal saved as #' + saved.id);
         await telegram.sendSignalAlert(sig);
         lastEmergencyTime = Date.now();
-        return; // skip regular emergency check if spike already fired
+        return;
         }
       }
     }
@@ -245,17 +203,12 @@ async function checkEmergency() {
       console.log('\n🚨 EMERGENCY SIGNAL TRIGGERED:', emergency.signal, 'at $' + curP);
       const baseline = calc.calcSignal(liveC, highs, lows, candles, candles4h, candlesDaily);
 
-      // Build a fully consistent signal object - every field that depends on
-      // label/direction gets explicitly overwritten together, not just label.
-      // This was the bug: previously only sig.label was overwritten, leaving
-      // direction/strength/score from the calm baseline calc mismatched
-      // against the emergency verdict.
       const sig = {
         ...baseline,
         label: emergency.signal,
         direction: emergency.signal === 'BUY' ? 'LONG' : 'SHORT',
         strength: 'EMERGENCY',
-        score: emergency.signal === 'BUY' ? 6 : -6, // emergency = max conviction by definition
+        score: emergency.signal === 'BUY' ? 6 : -6,
         entry: emergency.entry,
         takeProfit: emergency.takeProfit,
         stopLoss: emergency.stopLoss,
@@ -275,19 +228,11 @@ async function checkEmergency() {
 
 // ════════════════════════════════════════════════════════════════════════
 // HIGH CONFLUENCE CHECK — runs every 5 minutes
-// Detects when all indicator groups align strongly on same direction.
-// Completely independent of news. Fires an emergency signal when
-// 8+ out of ~10 indicators agree, representing ~85% confluence.
-// Cooldown: minimum 30 minutes between high confluence signals.
 // ════════════════════════════════════════════════════════════════════════
 async function checkHighConfluenceSignal() {
   try {
-    // Cooldown — 30 minutes between signals
     if (lastEmergencyTime && (Date.now() - lastEmergencyTime) < 30 * 60 * 1000) return;
 
-    // Use MT5 candles as primary price history — real OHLCV data from broker
-    // This replaces the website API price history which used fake random walks
-    // when all APIs were unavailable. Indicators are now calculated from real data.
     const [candles, candles4h, candlesDaily] = await getCachedCandles();
 
     if (!candles || candles.length < 20) {
@@ -299,17 +244,10 @@ async function checkHighConfluenceSignal() {
     const highs   = candles.map(c => c.high);
     const lows    = candles.map(c => c.low);
 
-    // Get live MT5 price for freshest entry
     const mt5Price = await mt5.fetchMT5Price().catch(() => null);
     const currentPrice = mt5Price && mt5Price.price ? mt5Price.price : closes[closes.length - 1];
     const liveCloses = [...closes.slice(0, -1), currentPrice];
 
-    // ── Market hours check — runs EVERY cycle, not just when a signal is
-    // about to fire. Catches the weekly close (Fri evening–Sun evening)
-    // immediately and clearly, instead of only reacting once 6+ votes
-    // happen to line up. Critically: also clears currentVoteStatus so the
-    // dashboard's "building" widget doesn't sit frozen on stale numbers
-    // from before the market closed.
     const earlySessionInfo = calc.detectSession();
     const earlySessionCheck = checkSessionTradable(earlySessionInfo);
     if (!earlySessionCheck.ok) {
@@ -321,9 +259,6 @@ async function checkHighConfluenceSignal() {
       return;
     }
 
-    // ── Market freeze check — skip if price hasn't moved (unexpected
-    // closure like a holiday, or a feed hiccup — not covered by the
-    // day/hour calendar check above) ──
     if (trackPriceAndCheckFrozen(currentPrice)) {
       console.log(`[SCAN] $${currentPrice.toFixed(2)} — market appears CLOSED (frozen price) — skipping`);
       currentVoteStatus = {
@@ -336,7 +271,6 @@ async function checkHighConfluenceSignal() {
     console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${new Date().toISOString().substr(11,8)} UTC`);
     const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily);
 
-    // Show vote counts so we can see how close we are to a signal
     if (hc && hc.belowThreshold) {
       var dominant = hc.dominantSide || (hc.bullVotes > hc.bearVotes ? 'BUY' : 'SELL');
       var domVotes = Math.max(hc.bullVotes, hc.bearVotes);
@@ -354,25 +288,12 @@ async function checkHighConfluenceSignal() {
     }
 
     if (hc && !hc.belowThreshold && hc.signal) {
-      // ── Session filter ────────────────────────────────────────────────
-      // Only fire during London and New York sessions, and not right at
-      // the open/close of those sessions (see checkSessionTradable above).
       const sessionInfo = calc.detectSession();
       const sessionCheck = checkSessionTradable(sessionInfo);
 
-      // ── Spread filter ────────────────────────────────────────────────
-      // A wide bid-ask spread means uncertain/thin liquidity right now —
-      // entering on a wide spread eats directly into the $7 TP1 target.
       const spread = mt5Price && mt5Price.ask && mt5Price.bid ? (mt5Price.ask - mt5Price.bid) : null;
       const spreadOk = spread === null ? true : spread <= 0.50;
 
-      // ── News blackout ────────────────────────────────────────────────
-      // Blocks REGULAR signals within 20 minutes of a scheduled high-impact
-      // release (NFP, CPI, Fed decision, etc). The volatility right around
-      // a release is often just noise/whipsaw, not a real trend forming.
-      // Deliberately NOT applied to the candle-spike detector — that one
-      // exists specifically to catch genuine moves that follow news like
-      // this, exactly like what happened with today's NFP earlier.
       const newsCheck = calc.isWithinNewsBlackout(20);
 
       if (!sessionCheck.ok) {
@@ -420,8 +341,6 @@ async function checkHighConfluenceSignal() {
         await telegram.sendSignalAlert(sig);
         lastEmergencyTime = Date.now();
 
-        // Reset the building-progress tracker — a real signal now exists,
-        // the dashboard's main action card takes over from here.
         currentVoteStatus = { direction: null, votes: 0, against: 0, threshold: 6, blockedReason: null, updatedAt: new Date().toISOString() };
       }
     }
@@ -432,13 +351,6 @@ async function checkHighConfluenceSignal() {
 
 // ════════════════════════════════════════════════════════════════════════
 // LIVE PRICE CHECK — runs every 30 seconds, manages open trades
-//
-// UPDATED: now uses the real MT5 connection (PrimaCapital, via MetaApi) as
-// the primary source, since that's confirmed to match the actual broker
-// price exactly - not an estimate from a third-party website. Falls back
-// to the 9-API website chain only if the MT5 connection has an issue,
-// so trade management never goes completely blind even if MetaApi is
-// temporarily unavailable.
 // ════════════════════════════════════════════════════════════════════════
 async function checkLivePriceAndTrades() {
   try {
@@ -460,9 +372,6 @@ async function checkLivePriceAndTrades() {
 
     if (currentPrice === null) return;
 
-    // Logged separately so a failure in one doesn't prevent the other from
-    // running - kept this structure since it's what actually let us find
-    // the real bug earlier (each failure point isolated with its own trace).
     try {
       await db.logPrice(currentPrice, source);
     } catch (logErr) {
@@ -480,19 +389,10 @@ async function checkLivePriceAndTrades() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// SCHEDULER — no fixed signal times
-// Signals fire only when the system detects a strong setup.
-// The high confluence detector checks every 5 minutes and fires
-// when enough indicators agree. 30-minute cooldown between signals.
+// SCHEDULER
 // ════════════════════════════════════════════════════════════════════════
-
-// Emergency spike detection every 10 minutes
 cron.schedule('*/10 * * * *', checkEmergency);
-
-// High confluence check every 1 minute — the only signal generator
 cron.schedule('* * * * *', checkHighConfluenceSignal);
-
-// Live price + trade management every 30 seconds
 setInterval(checkLivePriceAndTrades, 30000);
 
 // ════════════════════════════════════════════════════════════════════════
@@ -549,11 +449,6 @@ app.get('/api/price-history', async (req, res) => {
   }
 });
 
-// Live price, now sourced directly from PrimaCapital's MT5 feed via MetaApi,
-// not from third-party websites. Confirmed today that gold-api.com was
-// returning prices $30+ off from the real broker - this connects to the
-// actual account instead, so what's shown matches what PrimaCapital's own
-// terminal shows.
 app.get('/api/live-price', async (req, res) => {
   try {
     const live = await mt5.fetchMT5Price();
@@ -566,33 +461,27 @@ app.get('/api/live-price', async (req, res) => {
   }
 });
 
-// Live vote-building progress — lets the dashboard show "getting close to
-// a signal" in real time, updated every 1 minute by the confluence check.
 app.get('/api/vote-status', (req, res) => {
   res.json(currentVoteStatus);
 });
 
 // ── Backtest — replays real historical candles through the exact live
 // signal logic to get a measured win rate, instead of guessing.
-// Fetches ~4 months of real MT5 candles across all three timeframes,
-// then walks forward through them. Can take 10-30+ seconds to run since
-// it's evaluating the full indicator stack at every historical hour.
 app.get('/api/backtest', async (req, res) => {
   try {
-    // Default to a much smaller, safer window for a first run — roughly
-    // 3 weeks of hourly data. Scale up later via ?hours=N once confirmed
-    // working. ?votes=N tests a different vote threshold than the current
-    // live setting (6) against the exact same historical data — this is
-    // how future threshold changes should be decided, evidence first
-    // instead of changing live settings and waiting days to find out.
     const hours1h = Math.min(parseInt(req.query.hours) || 500, 3000);
     const hours4h = Math.ceil(hours1h / 3);
     const hoursDaily = Math.ceil(hours1h / 15);
     const voteThreshold = parseInt(req.query.votes) || 6;
     const tp1Override = req.query.tp1 ? parseFloat(req.query.tp1) : undefined;
     const tp2Override = req.query.tp2 ? parseFloat(req.query.tp2) : undefined;
+    // ?direction=sell or ?direction=buy tests a direction-restricted config
+    // (e.g. SELL-only) as a true simulation — a filtered-out signal never
+    // fires, so it never consumes the cooldown either. Omit for the
+    // default: both directions, exactly as before.
+    const directionFilter = req.query.direction ? req.query.direction.toUpperCase() : null;
 
-    console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}...`);
+    console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}${directionFilter ? `, direction=${directionFilter}` : ''}...`);
 
     let fetchErrors = {};
     const [candles1h, candles4h, candlesDaily] = await Promise.all([
@@ -619,7 +508,7 @@ app.get('/api/backtest', async (req, res) => {
       });
     }
 
-    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override);
+    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override, directionFilter);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
     res.json(results);
@@ -653,9 +542,6 @@ async function start() {
     console.log('High confluence checks: every 1 minute');
     console.log('Emergency spike checks: every 10 minutes');
     console.log('Cooldown between signals: 30 minutes');
-    console.log('Emergency checks: every 10 minutes (price spike detection)');
-    console.log('High confluence checks: every 5 minutes (indicator alignment)');
-    console.log('High confluence cooldown: 30 minutes between signals');
     console.log('Live price + trade management: every 30 seconds');
   });
 }
