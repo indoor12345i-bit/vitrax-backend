@@ -28,6 +28,16 @@
 //   4. If a single candle's range touches both TP and SL in the same hour,
 //      we assume SL was hit first (the pessimistic assumption) since OHLC
 //      data alone can't tell us the true intra-hour sequence.
+//
+// ── UPDATE: optional directionFilter param ('BUY' or 'SELL') ────────────
+// Lets you backtest a direction-restricted config (e.g. SELL-only) as a
+// TRUE simulation — the filtered-out direction never fires, so it never
+// consumes the cooldown either. That's different from just filtering rows
+// out of a mixed-direction result afterward: in a real run, a BUY signal
+// still eats the 30-min cooldown even though you don't care about it,
+// which can block a SELL that would otherwise have fired in that window.
+// This makes the comparison honest. Omit it (or pass null) to test both
+// directions exactly as before — default behavior is unchanged.
 // ════════════════════════════════════════════════════════════════════════
 const calc = require('./calculations');
 
@@ -36,7 +46,7 @@ const MIN_1H_LOOKBACK = 100;   // ~4 days of hourly history before evaluating
 const MIN_4H_LOOKBACK = 15;
 const MIN_DAILY_LOOKBACK = 14;
 
-async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override) {
+async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override, directionFilter) {
   const threshold = voteThreshold || 6; // matches live default unless overridden
   if (!candles1h || candles1h.length < MIN_1H_LOOKBACK + 20) {
     return { error: `Not enough historical 1h candles — need at least ${MIN_1H_LOOKBACK + 20}, got ${candles1h ? candles1h.length : 0}` };
@@ -47,7 +57,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
 
   const trades = [];
   let lastSignalTime = null;
-  let skippedByFilter = { session: 0, cooldown: 0, belowThreshold: 0, insufficientMTF: 0 };
+  let skippedByFilter = { session: 0, cooldown: 0, belowThreshold: 0, insufficientMTF: 0, directionFiltered: 0 };
 
   // Forward-only pointers into the 4h/daily arrays — since every array is
   // chronologically ordered and we only ever move forward in time, we can
@@ -96,11 +106,14 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
       continue;
     }
 
-    // Run the EXACT same confluence logic live Vipertex uses right now
-    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold, tp1Override, tp2Override);
+    // Run the EXACT same confluence logic live Vipertex uses right now,
+    // plus the optional direction filter (undefined/null = both allowed,
+    // exactly as before — this argument is purely additive)
+    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold, tp1Override, tp2Override, directionFilter);
 
     if (!hc || hc.belowThreshold || !hc.signal) {
-      if (hc && hc.belowThreshold) skippedByFilter.belowThreshold++;
+      if (hc && hc.directionFiltered) skippedByFilter.directionFiltered++;
+      else if (hc && hc.belowThreshold) skippedByFilter.belowThreshold++;
       continue;
     }
 
@@ -201,6 +214,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
     voteThreshold: threshold,
     tp1Used: tp1Override || 7,
     tp2Used: tp2Override || 18,
+    directionFilter: directionFilter || 'BOTH',
     dataRange: {
       from: candles1h[MIN_1H_LOOKBACK].time,
       to: candles1h[candles1h.length - 1].time,
