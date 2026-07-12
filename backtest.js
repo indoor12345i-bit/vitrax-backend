@@ -182,7 +182,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
   const hourlyBreakdown = {};
   for (let h = 0; h < 24; h++) hourlyBreakdown[h] = { wins: 0, losses: 0 };
   trades.forEach(t => {
-    const hour = parseInt(t.time.substr(11, 2));
+    const hour = new Date(t.time).getUTCHours(); // works whether time is a Date object or a string
     if (t.outcome === 'TP1' || t.outcome === 'TP2') hourlyBreakdown[hour].wins++;
     else hourlyBreakdown[hour].losses++;
   });
