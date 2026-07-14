@@ -50,9 +50,22 @@ function trackPriceAndCheckFrozen(price) {
 const checkSessionTradable = calc.checkSessionTradable;
 
 // Candle cache — reuse candles across checks instead of fetching every time
+// 1h candles refresh every 60 minutes, 4h every 4 hours, daily every 6 hours
 let candleCache = { candles1h: null, candles4h: null, candlesDaily: null };
 let candleCacheTime = { candles1h: 0, candles4h: 0, candlesDaily: 0 };
 const CANDLE_TTL = { candles1h: 15*60*1000, candles4h: 4*60*60*1000, candlesDaily: 6*60*60*1000 };
+
+// ── UPDATE: hard staleness ceiling ──────────────────────────────────────
+// The bug found tonight: if a candle fetch fails, the old code kept
+// silently serving whatever candle set it last successfully fetched --
+// forever, retrying each cycle but never actually admitting the data was
+// ancient if every retry also failed. That's exactly why the confluence
+// check sat frozen on the same 4/6 vote count for a full hour straight
+// while real price kept moving $9+. This caps how long a cache entry can
+// go without a SUCCESSFUL refresh before it's treated as unusable (null)
+// instead of trusted indefinitely -- and logs loudly when that happens,
+// so this failure mode is visible instead of silent.
+const MAX_STALENESS = { candles1h: 30*60*1000, candles4h: 8*60*60*1000, candlesDaily: 12*60*60*1000 };
 
 async function getCachedCandles() {
   const now = Date.now();
@@ -70,7 +83,19 @@ async function getCachedCandles() {
   if (c1h) { candleCache.candles1h = c1h; candleCacheTime.candles1h = now; }
   if (c4h) { candleCache.candles4h = c4h; candleCacheTime.candles4h = now; }
   if (cd)  { candleCache.candlesDaily = cd; candleCacheTime.candlesDaily = now; }
-  return [candleCache.candles1h, candleCache.candles4h, candleCache.candlesDaily];
+
+  const stale1h    = (now - candleCacheTime.candles1h)     > MAX_STALENESS.candles1h;
+  const stale4h    = (now - candleCacheTime.candles4h)     > MAX_STALENESS.candles4h;
+  const staleDaily = (now - candleCacheTime.candlesDaily)  > MAX_STALENESS.candlesDaily;
+  if (stale1h)    console.warn(`[CANDLE CACHE] 1h candles are ${Math.round((now-candleCacheTime.candles1h)/60000)} min stale — treating as unavailable`);
+  if (stale4h)    console.warn(`[CANDLE CACHE] 4h candles are ${Math.round((now-candleCacheTime.candles4h)/60000)} min stale — treating as unavailable`);
+  if (staleDaily) console.warn(`[CANDLE CACHE] Daily candles are ${Math.round((now-candleCacheTime.candlesDaily)/60000)} min stale — treating as unavailable`);
+
+  return [
+    stale1h    ? null : candleCache.candles1h,
+    stale4h    ? null : candleCache.candles4h,
+    staleDaily ? null : candleCache.candlesDaily,
+  ];
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -237,6 +262,10 @@ async function checkHighConfluenceSignal() {
 
     if (!candles || candles.length < 20) {
       console.log('[HIGH CONFLUENCE] Insufficient candle data — skipping');
+      currentVoteStatus = {
+        direction: null, votes: 0, against: 0, threshold: 6,
+        blockedReason: 'candle data unavailable or stale', updatedAt: new Date().toISOString(),
+      };
       return;
     }
 
@@ -475,10 +504,6 @@ app.get('/api/backtest', async (req, res) => {
     const voteThreshold = parseInt(req.query.votes) || 6;
     const tp1Override = req.query.tp1 ? parseFloat(req.query.tp1) : undefined;
     const tp2Override = req.query.tp2 ? parseFloat(req.query.tp2) : undefined;
-    // ?direction=sell or ?direction=buy tests a direction-restricted config
-    // (e.g. SELL-only) as a true simulation — a filtered-out signal never
-    // fires, so it never consumes the cooldown either. Omit for the
-    // default: both directions, exactly as before.
     const directionFilter = req.query.direction ? req.query.direction.toUpperCase() : null;
 
     console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}${directionFilter ? `, direction=${directionFilter}` : ''}...`);
