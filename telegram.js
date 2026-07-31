@@ -145,6 +145,7 @@ async function sendBreakevenSLAlert(tradeId, entry) {
 }
 
 module.exports = {
+  send,
   sendSignalAlert,
   sendNearTP1Alert,
   sendBreakevenAlert,
