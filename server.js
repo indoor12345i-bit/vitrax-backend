@@ -572,6 +572,20 @@ app.post('/api/trigger/emergency-check', async (req, res) => {
   res.json({ status: 'checked' });
 });
 
+// ── Test endpoint — sends a plain message right now, completely independent
+// of whether any real trading signal has fired. Exists purely to isolate
+// "is Telegram wired correctly" from "has enough time passed for a real
+// signal" -- two very different questions that look identical from the
+// outside (both show as "nothing arrived on Telegram").
+app.get('/api/test-telegram', async (req, res) => {
+  try {
+    await telegram.send('🔧 Test message from Vipertex — if you see this, Telegram is wired correctly and the backend can reach it.');
+    res.json({ status: 'sent', note: 'Check your Telegram channel now.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ════════════════════════════════════════════════════════════════════════
 // STARTUP
 // ════════════════════════════════════════════════════════════════════════
