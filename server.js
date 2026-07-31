@@ -15,6 +15,24 @@ const telegram = require('./telegram');
 const tradeManager = require('./tradeManager');
 const backtest = require('./backtest');
 
+// ── Global crash safety net ──────────────────────────────────────────────
+// Node kills the ENTIRE process by default on any uncaught exception or
+// unhandled promise rejection -- including ones thrown deep inside a
+// dependency's own internals (like MetaApi's SDK reconnect logic), completely
+// outside any of our own try/catch blocks. That's the leading theory for
+// why Railway reported "removed because it's been crashed for too long":
+// a single stray error from a dependency, not our own code, silently taking
+// the whole server down, over and over. These two handlers catch anything
+// that would otherwise kill the process -- logging it loudly instead of
+// dying -- so one bad error from a library we don't control can't keep
+// repeatedly taking the whole service offline.
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL-CAUGHT] Uncaught exception (process kept alive):', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL-CAUGHT] Unhandled promise rejection (process kept alive):', reason);
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
