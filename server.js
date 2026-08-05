@@ -629,8 +629,9 @@ app.get('/api/test-telegram', async (req, res) => {
 });
 
 // Manual trigger — sends the daily summary right now, for testing,
-// instead of waiting for the 21:05 UTC scheduled run.
-app.post('/api/trigger/daily-summary', async (req, res) => {
+// instead of waiting for the 21:05 UTC scheduled run. GET, not POST, so
+// it can be triggered by just pasting the URL in a browser.
+app.get('/api/trigger/daily-summary', async (req, res) => {
   await sendDailySummary();
   res.json({ status: 'sent' });
 });
