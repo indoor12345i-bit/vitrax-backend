@@ -73,7 +73,9 @@ async function checkOpenTrades(currentPrice) {
         const newSL = entry;
         await db.updateTradeStatus(trade.id, 'BREAKEVEN', newSL, null, null);
         console.log(`✅ Trade #${trade.id} reached 50% — SL moved to breakeven ($${newSL})`);
-        await telegram.sendBreakevenAlert(trade.id, entry, newSL);
+        // UPDATE: now passes currentPrice so the alert can show the real,
+        // current profit as part of the "close now or move stop" choice.
+        await telegram.sendBreakevenAlert(trade.id, entry, newSL, currentPrice);
 
       } else if (trade.trade_status === 'BREAKEVEN' || trade.trade_status === 'TRAILING' || trade.trade_status === 'TP1_HIT') {
         // Already at breakeven — trail the stop
