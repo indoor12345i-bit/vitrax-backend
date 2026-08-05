@@ -65,6 +65,17 @@ async function initDB() {
     // Column already exists — ignore
   }
 
+  // Add tp1_hit_at column if it doesn't exist yet -- needed so the daily
+  // summary can tell WHEN a trade reached TP1, since TP1_HIT isn't a
+  // "closed" status (the trade may still be running toward TP2) and was
+  // previously invisible to any closed_at-based reporting entirely.
+  try {
+    await pool.query(`ALTER TABLE signals ADD COLUMN tp1_hit_at TIMESTAMP`);
+    console.log('✅ Added tp1_hit_at column');
+  } catch (e) {
+    // Column already exists — ignore
+  }
+
   console.log('✅ Database tables ready');
 }
 
@@ -111,7 +122,7 @@ async function getSignalHistory(limit = 20) {
 
 async function getOpenTrades() {
   const result = await pool.query(`
-    SELECT * FROM signals WHERE trade_status IN ('OPEN','BREAKEVEN','TRAILING')
+    SELECT * FROM signals WHERE trade_status IN ('OPEN','BREAKEVEN','TRAILING','TP1_HIT')
     ORDER BY created_at DESC
   `);
   return result.rows;
@@ -122,6 +133,7 @@ async function updateTradeStatus(id, status, currentSL, exitPrice, pnl) {
     UPDATE signals
     SET trade_status = $2, current_sl = COALESCE($3::decimal, current_sl),
         exit_price = $4::decimal, closed_at = CASE WHEN $6 LIKE 'CLOSED%' THEN NOW() ELSE closed_at END,
+        tp1_hit_at = CASE WHEN $6 = 'TP1_HIT' AND tp1_hit_at IS NULL THEN NOW() ELSE tp1_hit_at END,
         pnl = $5::decimal
     WHERE id = $1
   `, [id, status, currentSL, exitPrice, pnl, status]);
@@ -171,8 +183,13 @@ async function getPriceHistory(hours = 720) {
 // Used for the end-of-day Telegram report. A rolling lookback (not a fixed
 // calendar-day boundary) so it always covers exactly "since the last time
 // this ran," regardless of the exact hour the cron job fires at.
+//
+// UPDATE: also counts trades that hit TP1 today but haven't fully closed
+// yet (still running toward TP2) as a win, using the TP1-level profit --
+// these were previously invisible here entirely, since TP1_HIT isn't a
+// "closed" status and this query only looked at closed_at before.
 async function getDailySummary(hoursBack = 24) {
-  const result = await pool.query(`
+  const closedResult = await pool.query(`
     SELECT
       COUNT(*) FILTER (WHERE trade_status = 'CLOSED_WIN') as wins,
       COUNT(*) FILTER (WHERE trade_status = 'CLOSED_LOSS') as losses,
@@ -183,13 +200,31 @@ async function getDailySummary(hoursBack = 24) {
     WHERE trade_status LIKE 'CLOSED%'
       AND closed_at >= NOW() - INTERVAL '1 hour' * $1
   `, [hoursBack]);
-  const row = result.rows[0];
+  const c = closedResult.rows[0];
+
+  const tp1Result = await pool.query(`
+    SELECT
+      COUNT(*) as count,
+      COALESCE(SUM(ABS(take_profit - entry_price)), 0) as pnl
+    FROM signals
+    WHERE trade_status = 'TP1_HIT'
+      AND tp1_hit_at >= NOW() - INTERVAL '1 hour' * $1
+  `, [hoursBack]);
+  const t = tp1Result.rows[0];
+
+  const closedWins = parseInt(c.wins) || 0;
+  const closedTotal = parseInt(c.total_closed) || 0;
+  const closedPnl = parseFloat(c.total_pnl) || 0;
+  const tp1Count = parseInt(t.count) || 0;
+  const tp1Pnl = parseFloat(t.pnl) || 0;
+
   return {
-    wins: parseInt(row.wins) || 0,
-    losses: parseInt(row.losses) || 0,
-    breakevens: parseInt(row.breakevens) || 0,
-    totalClosed: parseInt(row.total_closed) || 0,
-    totalPnl: parseFloat(row.total_pnl) || 0,
+    wins: closedWins + tp1Count,
+    losses: parseInt(c.losses) || 0,
+    breakevens: parseInt(c.breakevens) || 0,
+    totalClosed: closedTotal + tp1Count,
+    totalPnl: closedPnl + tp1Pnl,
+    stillRunningToTP2: tp1Count,
   };
 }
 
