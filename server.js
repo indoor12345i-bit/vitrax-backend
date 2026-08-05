@@ -461,11 +461,28 @@ async function checkLivePriceAndTrades() {
 }
 
 // ════════════════════════════════════════════════════════════════════════
+// DAILY SUMMARY — sent once a day, just after the trading day ends
+// ════════════════════════════════════════════════════════════════════════
+async function sendDailySummary() {
+  try {
+    const summary = await db.getDailySummary(24);
+    await telegram.sendDailySummaryAlert(summary);
+    console.log(`[DAILY SUMMARY] Sent — ${summary.totalClosed} closed, $${summary.totalPnl.toFixed(2)} total`);
+  } catch (err) {
+    console.error('Daily summary failed:', err.message);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════
 // SCHEDULER
 // ════════════════════════════════════════════════════════════════════════
 cron.schedule('*/10 * * * *', checkEmergency);
 cron.schedule('* * * * *', checkHighConfluenceSignal);
 setInterval(checkLivePriceAndTrades, 30000);
+// Runs at 21:05 UTC daily -- just past the day's ~21:00 UTC close/rollover
+// (midnight in Beirut), the same boundary the rest of the system already
+// uses for weekend and daily-break detection.
+cron.schedule('5 21 * * *', sendDailySummary);
 
 // ════════════════════════════════════════════════════════════════════════
 // API ENDPOINTS — what the dashboard reads from
@@ -609,6 +626,13 @@ app.get('/api/test-telegram', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Manual trigger — sends the daily summary right now, for testing,
+// instead of waiting for the 21:05 UTC scheduled run.
+app.post('/api/trigger/daily-summary', async (req, res) => {
+  await sendDailySummary();
+  res.json({ status: 'sent' });
 });
 
 // ════════════════════════════════════════════════════════════════════════
