@@ -118,13 +118,6 @@ async function getOpenTrades() {
 }
 
 async function updateTradeStatus(id, status, currentSL, exitPrice, pnl) {
-  // FOUND VIA STACK TRACE: $2 (status) was being used twice in this query -
-  // once for the direct column assignment (trade_status = $2) and again
-  // inside the CASE/LIKE comparison. Postgres independently infers a type
-  // for each usage and throws "inconsistent types deduced" when they
-  // conflict - the exact documented behavior described in multiple
-  // node-postgres/PostgreSQL bug reports. Giving the CASE comparison its
-  // own parameter ($6) instead of reusing $2 eliminates the ambiguity.
   await pool.query(`
     UPDATE signals
     SET trade_status = $2, current_sl = COALESCE($3::decimal, current_sl),
@@ -135,11 +128,6 @@ async function updateTradeStatus(id, status, currentSL, exitPrice, pnl) {
 }
 
 async function logPrice(price, source) {
-  // Explicit numeric type cast on BOTH the value and ensuring source is
-  // cast to its target type too - this resolves a documented node-postgres
-  // issue (driver sends JS numbers as 'double precision' by default,
-  // conflicting with the DECIMAL/numeric column type) that a single-side
-  // cast doesn't always resolve, per github.com/brianc/node-postgres/issues/1205
   const numericPrice = Number(price);
   await pool.query(
     `INSERT INTO price_log (price, source) VALUES ($1::numeric, $2::varchar)`,
@@ -148,12 +136,6 @@ async function logPrice(price, source) {
 }
 
 async function getWinRate() {
-  // TRACK_RECORD_START: signals before this timestamp were generated during
-  // active development/testing today (2026-06-30) - manual test triggers,
-  // signals created while APIs were being swapped, and trades that sat
-  // unmanaged due to the updateTradeStatus bug (fixed same day). Including
-  // them would misrepresent real performance. Only signals from this
-  // cutoff forward count toward the genuine track record.
   const TRACK_RECORD_START = process.env.TRACK_RECORD_START || '2026-07-02T10:39:00Z';
 
   const result = await pool.query(`
@@ -177,7 +159,6 @@ async function getWinRate() {
 }
 
 async function getPriceHistory(hours = 720) {
-  // 720 hours = 30 days, matches the chart's previous 30-day window
   const result = await pool.query(`
     SELECT price, logged_at FROM price_log
     WHERE logged_at > NOW() - INTERVAL '1 hour' * $1
@@ -186,7 +167,34 @@ async function getPriceHistory(hours = 720) {
   return result.rows;
 }
 
+// ── NEW: daily summary — every trade that CLOSED in the last N hours ────
+// Used for the end-of-day Telegram report. A rolling lookback (not a fixed
+// calendar-day boundary) so it always covers exactly "since the last time
+// this ran," regardless of the exact hour the cron job fires at.
+async function getDailySummary(hoursBack = 24) {
+  const result = await pool.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE trade_status = 'CLOSED_WIN') as wins,
+      COUNT(*) FILTER (WHERE trade_status = 'CLOSED_LOSS') as losses,
+      COUNT(*) FILTER (WHERE trade_status = 'CLOSED_BE') as breakevens,
+      COUNT(*) FILTER (WHERE trade_status LIKE 'CLOSED%') as total_closed,
+      SUM(pnl) FILTER (WHERE trade_status LIKE 'CLOSED%') as total_pnl
+    FROM signals
+    WHERE trade_status LIKE 'CLOSED%'
+      AND closed_at >= NOW() - INTERVAL '1 hour' * $1
+  `, [hoursBack]);
+  const row = result.rows[0];
+  return {
+    wins: parseInt(row.wins) || 0,
+    losses: parseInt(row.losses) || 0,
+    breakevens: parseInt(row.breakevens) || 0,
+    totalClosed: parseInt(row.total_closed) || 0,
+    totalPnl: parseFloat(row.total_pnl) || 0,
+  };
+}
+
 module.exports = {
   pool, initDB, saveSignal, getLatestSignal, getSignalHistory,
-  getOpenTrades, updateTradeStatus, logPrice, getWinRate, getPriceHistory
+  getOpenTrades, updateTradeStatus, logPrice, getWinRate, getPriceHistory,
+  getDailySummary
 };
