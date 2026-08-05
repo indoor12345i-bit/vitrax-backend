@@ -62,11 +62,9 @@ async function sendNearTP1Alert(tradeId, entry, tp1) {
 }
 
 // ── Breakeven alert — trade has moved halfway to TP1 ──────────────────
-// UPDATE: now presents a real choice instead of a single instruction --
-// close now and take the profit currently showing, or move the stop and
-// stay in for the full target -- each with its own plain reason. Needs
-// currentPrice passed in (available in tradeManager.js's checkOpenTrades)
-// to show the actual dollar amount currently on the table.
+// UPDATE: "move your stop to entry" is now stated directly, in the same
+// message, not buried as one of two equal options -- closing now is still
+// offered right alongside it as the alternative, per the earlier request.
 async function sendBreakevenAlert(tradeId, entry, newSL, currentPrice) {
   const currentProfit = Math.abs(currentPrice - entry).toFixed(2);
 
@@ -75,15 +73,12 @@ async function sendBreakevenAlert(tradeId, entry, newSL, currentPrice) {
     ``,
     `You're halfway to target, sitting on *$${currentProfit}* right now.`,
     ``,
-    `Two solid options from here:`,
+    `✅ *Move your stop loss to entry: $${parseFloat(newSL).toFixed(2)}*`,
+    `_Makes it impossible for this trade to turn into a loss from here, while staying in for the full target._`,
     ``,
-    `*1) Close now and take the $${currentProfit}.*`,
-    `_Locks in exactly what you see right now — no chance of it slipping away if price reverses._`,
+    `Prefer to lock in exactly what you see right now instead? You can also just close and take the $${currentProfit}.`,
     ``,
-    `*2) Move your stop loss to entry: $${parseFloat(newSL).toFixed(2)}*`,
-    `_Keeps you in for the full target, while making it impossible for this trade to turn into a loss from here._`,
-    ``,
-    `📌 _Either is a reasonable move — your call._`,
+    `📌 _Either is fine — moving your stop is the safer default._`,
   ].join('\n');
 
   await send(msg);
@@ -156,6 +151,33 @@ async function sendBreakevenSLAlert(tradeId, entry) {
   await send(msg);
 }
 
+// ── Daily summary — sent once a day, reports in dollars (gold has no
+// single standard "pip" size, so dollars is the unambiguous choice) ─────
+async function sendDailySummaryAlert(summary) {
+  const { wins, losses, breakevens, totalClosed, totalPnl } = summary;
+
+  if (totalClosed === 0) {
+    await send([`📊 *DAILY SUMMARY*`, ``, `No trades closed today.`].join('\n'));
+    return;
+  }
+
+  const arrow = totalPnl >= 0 ? '📈' : '📉';
+  const sign  = totalPnl >= 0 ? '+' : '';
+
+  const lines = [
+    `📊 *DAILY SUMMARY*`,
+    ``,
+    `${arrow} *${sign}$${totalPnl.toFixed(2)}* today`,
+    ``,
+    `✅ Wins: ${wins}`,
+    `🛑 Losses: ${losses}`,
+  ];
+  if (breakevens > 0) lines.push(`➖ Breakeven: ${breakevens}`);
+  lines.push(``, `📋 Total closed: ${totalClosed}`);
+
+  await send(lines.join('\n'));
+}
+
 module.exports = {
   send,
   sendSignalAlert,
@@ -165,4 +187,5 @@ module.exports = {
   sendTP2Alert,
   sendSLAlert,
   sendBreakevenSLAlert,
+  sendDailySummaryAlert,
 };
