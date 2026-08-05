@@ -61,17 +61,29 @@ async function sendNearTP1Alert(tradeId, entry, tp1) {
   await send(msg);
 }
 
-// ── Breakeven alert — SL moved to entry ──────────────────────────────
-async function sendBreakevenAlert(tradeId, entry, newSL) {
+// ── Breakeven alert — trade has moved halfway to TP1 ──────────────────
+// UPDATE: now presents a real choice instead of a single instruction --
+// close now and take the profit currently showing, or move the stop and
+// stay in for the full target -- each with its own plain reason. Needs
+// currentPrice passed in (available in tradeManager.js's checkOpenTrades)
+// to show the actual dollar amount currently on the table.
+async function sendBreakevenAlert(tradeId, entry, newSL, currentPrice) {
+  const currentProfit = Math.abs(currentPrice - entry).toFixed(2);
+
   const msg = [
-    `🔒 *MOVE YOUR STOP LOSS* — Signal #${tradeId}`,
+    `📈 *GOOD PROGRESS* — Signal #${tradeId}`,
     ``,
-    `Price has moved in your favour.`,
-    `*Move your stop loss to: $${parseFloat(newSL).toFixed(2)}*`,
+    `You're halfway to target, sitting on *$${currentProfit}* right now.`,
     ``,
-    `This locks in a breakeven trade — if price reverses now, you exit with no loss.`,
+    `Two solid options from here:`,
     ``,
-    `📌 _Update your SL on your broker platform now._`,
+    `*1) Close now and take the $${currentProfit}.*`,
+    `_Locks in exactly what you see right now — no chance of it slipping away if price reverses._`,
+    ``,
+    `*2) Move your stop loss to entry: $${parseFloat(newSL).toFixed(2)}*`,
+    `_Keeps you in for the full target, while making it impossible for this trade to turn into a loss from here._`,
+    ``,
+    `📌 _Either is a reasonable move — your call._`,
   ].join('\n');
 
   await send(msg);
