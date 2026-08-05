@@ -207,6 +207,15 @@ async function checkEmergency() {
     const curP   = mt5P && mt5P.price ? mt5P.price : closes[closes.length-1];
     const liveC  = [...closes.slice(0,-1), curP];
 
+    // ── UPDATE: no new signal while a trade is already open ───────────
+    // Same rule as checkHighConfluenceSignal() -- covers both the candle
+    // spike path and the emergency-trigger path below, in one check.
+    const openTradesNow = await db.getOpenTrades();
+    if (openTradesNow && openTradesNow.length > 0) {
+      console.log(`[EMERGENCY] Skipping — trade #${openTradesNow[0].id} still open, waiting for it to close first`);
+      return;
+    }
+
     if (lastEmergencyTime === null || (Date.now() - lastEmergencyTime) > 30 * 60 * 1000) {
       const spike = calc.checkCandleSpike(candles, curP);
       if (spike) {
@@ -343,6 +352,16 @@ async function checkHighConfluenceSignal() {
 
       const newsCheck = calc.isWithinNewsBlackout(20);
 
+      // ── UPDATE: no new signal while a trade is already open ───────────
+      // Previously the only thing spacing signals apart was the 30-min
+      // time-based cooldown -- meaning a second signal could fire while
+      // the first was still open and unresolved. This waits for the
+      // current trade to actually CLOSE (hit TP1, TP2, or SL) before a
+      // new one is allowed to fire, no matter how good a new setup looks
+      // in the meantime.
+      const openTrades = await db.getOpenTrades();
+      const hasOpenTrade = openTrades && openTrades.length > 0;
+
       if (!sessionCheck.ok) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but ${sessionCheck.reason}`);
         currentVoteStatus = {
@@ -360,6 +379,12 @@ async function checkHighConfluenceSignal() {
         currentVoteStatus = {
           direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
           threshold: 6, blockedReason: `near "${newsCheck.event}" release`, updatedAt: new Date().toISOString(),
+        };
+      } else if (hasOpenTrade) {
+        console.log(`[BLOCKED] ${hc.signal} setup reached threshold but trade #${openTrades[0].id} is still open — waiting for it to close first`);
+        currentVoteStatus = {
+          direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
+          threshold: 6, blockedReason: `trade #${openTrades[0].id} still open — waiting for it to close`, updatedAt: new Date().toISOString(),
         };
       } else {
         console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
