@@ -386,38 +386,28 @@ function calcATR(closes, highs, lows, period) {
   return +atr.toFixed(2);
 }
 
-function calcDynamicLevels(cur, sig, atr, rsiV, tp1Override, tp2Override) {
-  if (sig === 'WAIT') return { tp: null, tp1: null, tp2: null, sl: null, atr: atr };
-  var slMultiplier = 0.5;
-  if (rsiV < 25 && sig === 'BUY') { slMultiplier = 0.4; }
-  else if (rsiV > 75 && sig === 'SELL') { slMultiplier = 0.4; }
-  else if (rsiV > 45 && rsiV < 55) { slMultiplier = 0.6; }
+function calcDynamicLevels(cur, sig, atr, rsiV, tpOverride, slOverride) {
+  if (sig === 'WAIT') return { tp: null, sl: null, atr: atr };
 
-  var slDist = Math.max(Math.min(+(atr*slMultiplier).toFixed(2), 50), 5);
-  var tp1Dist = tp1Override || 7;
-  var tp2Dist = tp2Override || 18;
+  var tpDist = tpOverride || 6;
+  var slDist = slOverride || 8;
 
-  var tp1, tp2, sl;
+  var tp, sl;
   if (sig === 'BUY') {
-    tp1 = +(cur + tp1Dist).toFixed(2);
-    tp2 = +(cur + tp2Dist).toFixed(2);
-    sl  = +(cur - slDist).toFixed(2);
+    tp = +(cur + tpDist).toFixed(2);
+    sl = +(cur - slDist).toFixed(2);
   } else {
-    tp1 = +(cur - tp1Dist).toFixed(2);
-    tp2 = +(cur - tp2Dist).toFixed(2);
-    sl  = +(cur + slDist).toFixed(2);
+    tp = +(cur - tpDist).toFixed(2);
+    sl = +(cur + slDist).toFixed(2);
   }
 
   return {
-    tp: tp1,
-    tp1: tp1,
-    tp2: tp2,
+    tp: tp,
     sl: sl,
     atr: atr,
     slDist: slDist,
-    tp1Dist: tp1Dist,
-    tp2Dist: tp2Dist,
-    rr: +(tp2Dist / slDist).toFixed(1)
+    tpDist: tpDist,
+    rr: +(tpDist / slDist).toFixed(2)
   };
 }
 
@@ -771,7 +761,7 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 
   return {
     label: label, direction: dir, strength: strength, score: score, reasons: reasons,
-    entry: p, takeProfit: levels.tp1, takeProfit2: levels.tp2, stopLoss: levels.sl, atr: atrValue, riskReward: levels.rr,
+    entry: p, takeProfit: levels.tp, stopLoss: levels.sl, atr: atrValue, riskReward: levels.rr,
     rsi: rsiV, ema14: e14v, ema25: e25v, confidence: confidence,
     fearGreed: fgScore, candlePattern: paPattern.name || pattern.name, session: sessionInfo.session,
     whaleDetected: whaleDetected, stopHuntDetected: stopHunt, isChoppy: isChoppy,
@@ -885,7 +875,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, directionFiltered: true };
   }
 
-  var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override, tp2Override);
+  var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override);
   var confidence = Math.min(85, 65 + (dominantVotes - threshold) * 5 - (minorityVotes * 3));
 
   console.log('[HIGH CONFLUENCE] ' + dominantSide + ' detected — ' + dominantVotes + '/' + totalVotes + ' votes | confidence ' + confidence + '%');
@@ -893,8 +883,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   return {
     signal: dominantSide,
     entry: p,
-    takeProfit: levels.tp1,
-    takeProfit2: levels.tp2,
+    takeProfit: levels.tp,
     stopLoss: levels.sl,
     confidence: Math.round(confidence),
     reasons: ['🔥 HIGH CONFLUENCE SIGNAL — ' + dominantVotes + '/' + totalVotes + ' indicators agree'].concat(reasons),
@@ -937,8 +926,7 @@ function checkCandleSpike(candles, currentPrice) {
   return {
     signal:      direction,
     entry:       currentPrice,
-    takeProfit:  levels.tp1,
-    takeProfit2: levels.tp2,
+    takeProfit:  levels.tp,
     stopLoss:    levels.sl,
     confidence:  Math.min(82, 60 + Math.floor(parseFloat(atrMultiple) * 5)),
     reasons: [
@@ -1039,7 +1027,7 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
     }
 
     return {
-      signal: sig, entry: price, takeProfit: levels.tp1, takeProfit2: levels.tp2, stopLoss: levels.sl,
+      signal: sig, entry: price, takeProfit: levels.tp, stopLoss: levels.sl,
       confidence: Math.round(confidence), reasons: reasons
     };
   }
