@@ -128,6 +128,53 @@ async function getOpenTrades() {
   return result.rows;
 }
 
+// ── Atomic TP1 check-and-set ────────────────────────────────────────────
+// (kept for now in case older open trades still reference TP1/TP2 --
+// safe to remove once every open trade has migrated to the single-TP model)
+async function markTP1Hit(id, currentSL) {
+  const result = await pool.query(`
+    UPDATE signals
+    SET trade_status = 'TP1_HIT',
+        current_sl = COALESCE($2::decimal, current_sl),
+        tp1_hit_at = NOW()
+    WHERE id = $1
+      AND trade_status != 'TP1_HIT'
+      AND trade_status NOT LIKE 'CLOSED%'
+    RETURNING id
+  `, [id, currentSL]);
+  return result.rows.length > 0;
+}
+
+// ── Atomic breakeven check-and-set ──────────────────────────────────────
+// Same pattern as markTP1Hit -- only the first call for a given trade can
+// ever match and update; every later call (even an overlapping one from a
+// near-simultaneous check) matches nothing and returns false.
+async function markBreakevenReached(id, newSL) {
+  const result = await pool.query(`
+    UPDATE signals
+    SET trade_status = 'BREAKEVEN', current_sl = $2::decimal
+    WHERE id = $1 AND trade_status = 'OPEN'
+    RETURNING id
+  `, [id, newSL]);
+  return result.rows.length > 0;
+}
+
+// ── Atomic close (TP hit or SL hit) ─────────────────────────────────────
+// Same idea again: WHERE trade_status NOT LIKE 'CLOSED%' means only the
+// first call that reaches this can ever actually close the trade -- any
+// later or overlapping call for the same trade finds it already closed
+// and does nothing, so a close/alert can never double-fire.
+async function markTradeClosed(id, status, currentSL, exitPrice, pnl) {
+  const result = await pool.query(`
+    UPDATE signals
+    SET trade_status = $2, current_sl = COALESCE($3::decimal, current_sl),
+        exit_price = $4::decimal, closed_at = NOW(), pnl = $5::decimal
+    WHERE id = $1 AND trade_status NOT LIKE 'CLOSED%'
+    RETURNING id
+  `, [id, status, currentSL, exitPrice, pnl]);
+  return result.rows.length > 0;
+}
+
 async function updateTradeStatus(id, status, currentSL, exitPrice, pnl) {
   await pool.query(`
     UPDATE signals
@@ -231,5 +278,5 @@ async function getDailySummary(hoursBack = 24) {
 module.exports = {
   pool, initDB, saveSignal, getLatestSignal, getSignalHistory,
   getOpenTrades, updateTradeStatus, logPrice, getWinRate, getPriceHistory,
-  getDailySummary
+  getDailySummary, markTP1Hit, markBreakevenReached, markTradeClosed
 };
