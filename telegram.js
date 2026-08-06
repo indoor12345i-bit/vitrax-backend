@@ -1,5 +1,6 @@
 // ════════════════════════════════════════════════════════════════════════
 // TELEGRAM NOTIFICATIONS — Vipertex Gold Signals
+// Single-target model: TP $6, breakeven trigger $3.30, SL $8 (flat)
 // ════════════════════════════════════════════════════════════════════════
 
 const TELEGRAM_TOKEN   = process.env.TELEGRAM_TOKEN   || '8285392664:AAGi0-cATBXsh4YijfzlYjUWBUvNTtDGoPo';
@@ -21,6 +22,7 @@ async function send(text) {
 }
 
 // ── New signal ────────────────────────────────────────────────────────
+// UPDATE: single TP now, TP2 removed entirely.
 async function sendSignalAlert(sig) {
   if (!sig || sig.label === 'WAIT') return;
   const arrow    = sig.label === 'BUY' ? '🟢' : '🔴';
@@ -33,11 +35,9 @@ async function sendSignalAlert(sig) {
     `*${strength}${dir}* — XAU/USD Gold`,
     ``,
     `💰 *Entry:*     $${parseFloat(sig.entry).toFixed(2)}`,
-    `🎯 *TP1:*       $${parseFloat(sig.takeProfit).toFixed(2)}`,
-    `🎯 *TP2:*       $${parseFloat(sig.takeProfit2).toFixed(2)}`,
+    `🎯 *Target:*    $${parseFloat(sig.takeProfit).toFixed(2)}`,
     `🛑 *Stop Loss:* $${parseFloat(sig.stopLoss).toFixed(2)}`,
     ``,
-    `📌 _When price reaches TP1, you can close your position or wait for TP2._`,
     `📌 _Always keep your stop loss active._`,
     ``,
     `⚠️ _Not financial advice. Always use stop loss._`,
@@ -46,32 +46,14 @@ async function sendSignalAlert(sig) {
   await send(msg);
 }
 
-// ── Near TP1 — remind to move SL to entry ────────────────────────────
-async function sendNearTP1Alert(tradeId, entry, tp1) {
-  const msg = [
-    `⚡ *ALMOST AT TP1* — Signal #${tradeId}`,
-    ``,
-    `Price is within $2 of Take Profit 1 at *$${parseFloat(tp1).toFixed(2)}*`,
-    ``,
-    `📌 *Move your stop loss to entry now: $${parseFloat(entry).toFixed(2)}*`,
-    ``,
-    `This ensures you exit at breakeven even if price reverses before hitting TP1.`,
-  ].join('\n');
-
-  await send(msg);
-}
-
-// ── Breakeven alert — trade has moved halfway to TP1 ──────────────────
-// UPDATE: "move your stop to entry" is now stated directly, in the same
-// message, not buried as one of two equal options -- closing now is still
-// offered right alongside it as the alternative, per the earlier request.
+// ── Breakeven alert — profit has reached $3.30 ─────────────────────────
 async function sendBreakevenAlert(tradeId, entry, newSL, currentPrice) {
   const currentProfit = Math.abs(currentPrice - entry).toFixed(2);
 
   const msg = [
     `📈 *GOOD PROGRESS* — Signal #${tradeId}`,
     ``,
-    `You're halfway to target, sitting on *$${currentProfit}* right now.`,
+    `You're sitting on *$${currentProfit}* right now.`,
     ``,
     `✅ *Move your stop loss to entry: $${parseFloat(newSL).toFixed(2)}*`,
     `_Makes it impossible for this trade to turn into a loss from here, while staying in for the full target._`,
@@ -84,35 +66,19 @@ async function sendBreakevenAlert(tradeId, entry, newSL, currentPrice) {
   await send(msg);
 }
 
-// ── TP1 hit ───────────────────────────────────────────────────────────
-async function sendTP1Alert(tradeId, tp1, tp2) {
+// ── TP hit — single target, this closes the trade completely ───────────
+// Replaces the old sendTP1Alert / sendTP2Alert pair now that there's only
+// one target. This is the LAST message for this trade -- nothing further
+// mentions this signal number again once this fires.
+async function sendTPHitAlert(tradeId, tp, pnl) {
   const msg = [
-    `🎯 *TP1 HIT* — Signal #${tradeId}`,
+    `🎯 *TARGET HIT* — Signal #${tradeId}`,
     ``,
-    `Price reached *$${parseFloat(tp1).toFixed(2)}*`,
+    `Price reached *$${parseFloat(tp).toFixed(2)}* — *+$${parseFloat(pnl).toFixed(2)}*`,
     ``,
-    `✅ *You can close your position now and take profit.*`,
+    `✅ *Trade closed. Full target reached.*`,
     ``,
-    `Or if you want to go for TP2 at *$${parseFloat(tp2).toFixed(2)}*:`,
-    `→ Make sure your stop loss is at breakeven`,
-    `→ Only risk-free money stays in the trade`,
-    ``,
-    `📌 _Your choice — TP1 is already a winning trade._`,
-  ].join('\n');
-
-  await send(msg);
-}
-
-// ── TP2 hit ───────────────────────────────────────────────────────────
-async function sendTP2Alert(tradeId, tp2) {
-  const msg = [
-    `🎯🎯 *TP2 HIT* — Signal #${tradeId}`,
-    ``,
-    `Price reached *$${parseFloat(tp2).toFixed(2)}*`,
-    ``,
-    `✅ *Close all positions now. Full target reached.*`,
-    ``,
-    `Well done. Wait for the next Vipertex signal.`,
+    `Well done. Watching for the next signal.`,
   ].join('\n');
 
   await send(msg);
@@ -139,7 +105,7 @@ async function sendSLAlert(tradeId, sl) {
 // ── Breakeven SL hit (price returned to entry after going up) ─────────
 async function sendBreakevenSLAlert(tradeId, entry) {
   const msg = [
-    `🔒 *BREAKEVEN EXIT* — Signal #${tradeId}`,
+    `🔁 *BREAKEVEN EXIT* — Signal #${tradeId}`,
     ``,
     `Price returned to your breakeven level at *$${parseFloat(entry).toFixed(2)}*`,
     ``,
@@ -151,8 +117,10 @@ async function sendBreakevenSLAlert(tradeId, entry) {
   await send(msg);
 }
 
-// ── Daily summary — sent once a day, reports in dollars (gold has no
-// single standard "pip" size, so dollars is the unambiguous choice) ─────
+// ── Daily summary — reports in dollars (gold has no single standard
+// "pip" size, so dollars is the unambiguous choice) ─────────────────────
+// UPDATE: no more "still running toward TP2" note -- with a single
+// target, every counted win is fully closed, no in-between state.
 async function sendDailySummaryAlert(summary) {
   const { wins, losses, breakevens, totalClosed, totalPnl } = summary;
 
@@ -173,7 +141,7 @@ async function sendDailySummaryAlert(summary) {
     `🛑 Losses: ${losses}`,
   ];
   if (breakevens > 0) lines.push(`➖ Breakeven: ${breakevens}`);
-  lines.push(``, `📋 Total closed: ${totalClosed}`);
+  lines.push(``, `📋 Total: ${totalClosed}`);
 
   await send(lines.join('\n'));
 }
@@ -181,10 +149,8 @@ async function sendDailySummaryAlert(summary) {
 module.exports = {
   send,
   sendSignalAlert,
-  sendNearTP1Alert,
   sendBreakevenAlert,
-  sendTP1Alert,
-  sendTP2Alert,
+  sendTPHitAlert,
   sendSLAlert,
   sendBreakevenSLAlert,
   sendDailySummaryAlert,
