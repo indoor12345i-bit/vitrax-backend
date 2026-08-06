@@ -154,7 +154,6 @@ async function generateScheduledSignal() {
         sig.direction = 'NEUTRAL';
         sig.strength  = '';
         sig.takeProfit  = null;
-        sig.takeProfit2 = null;
         sig.stopLoss    = null;
         sig.reasons.push('⏸️ Quality gate: ' + gateReasons.join(' | '));
       } else {
@@ -167,8 +166,7 @@ async function generateScheduledSignal() {
       const realEntry = mt5Price.price;
       const levels = calc.calcDynamicLevels(realEntry, sig.label, sig.atr, sig.rsi);
       sig.entry    = realEntry;
-      sig.takeProfit  = levels.tp1;
-      sig.takeProfit2 = levels.tp2;
+      sig.takeProfit  = levels.tp;
       sig.stopLoss    = levels.sl;
       console.log(`[MT5] Entry price overridden: $${realEntry} (was $${priceData.closes[priceData.closes.length-1]})`);
     } else if (sig.label !== 'WAIT') {
@@ -235,7 +233,6 @@ async function checkEmergency() {
           score:       spike.signal === 'BUY' ? 6 : -6,
           entry:       curP,
           takeProfit:  spike.takeProfit,
-          takeProfit2: spike.takeProfit2,
           stopLoss:    spike.stopLoss,
           confidence:  spike.confidence,
           reasons:     [...spike.reasons, `Session: ${sessionInfo.session}`],
@@ -401,8 +398,7 @@ async function checkHighConfluenceSignal() {
           strength: 'HIGH CONFLUENCE',
           score: hc.signal === 'BUY' ? 6 : -6,
           entry: currentPrice,
-          takeProfit:  levels.tp1,
-          takeProfit2: levels.tp2,
+          takeProfit:  levels.tp,
           stopLoss:    levels.sl,
           confidence:  hc.confidence,
           reasons:     [...hc.reasons, `Session: ${sessionInfo.session}`],
