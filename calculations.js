@@ -506,14 +506,11 @@ function checkSessionTradable(sessionInfo, atDate) {
     return { ok: false, reason: 'market closed for the weekend (closed ~21:00 UTC Friday)' };
   }
 
-  // UPDATE: hard cutoff at 8pm Lebanon time (17:00 UTC) -- no new trades
-  // fire after this, no matter what session label is showing. This cuts
-  // the "New York" label down to effectively one hour (7pm-8pm Lebanon),
-  // since that label otherwise runs up to near midnight. London is
-  // unaffected -- it's already finished well before this point.
-  if (utcH >= 17) {
-    return { ok: false, reason: 'after the 8pm Lebanon time cutoff' };
-  }
+  // UPDATE: 8pm Lebanon cutoff -- TEMPORARILY DISABLED on request, restoring
+  // the original full London/New York window. Re-enable by uncommenting.
+  //if (utcH >= 17) {
+  //  return { ok: false, reason: 'after the 8pm Lebanon time cutoff' };
+  //}
 
   if (sessionInfo.session !== 'London' && sessionInfo.session !== 'New York') {
     return { ok: false, reason: 'session is ' + sessionInfo.session + ' — only London/New York are tradable' };
@@ -903,21 +900,19 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true };
   }
 
-  // ── Contradiction check ────────────────────────────────────────────
-  // Blocks a signal if 2 or more of its OWN named reasons actively
-  // disagree with the direction about to fire -- e.g. firing BUY while
-  // "MACD bearish momentum" and "Below AVWAP" are both sitting in its
-  // own reasons list. This is exactly what happened with a real trade
-  // tonight (a BUY that fired carrying two contradicting reasons and
-  // went on to lose) -- a real, observed gap, not a hypothetical one.
+  // ── Contradiction check #1 -- TEMPORARILY DISABLED ──────────────────
+  // Turned off on request: real subscribers were waiting and this, combined
+  // with the second (also-disabled) check below, was cutting today down to
+  // almost nothing. Detection logic left in place -- just re-enable the
+  // return below to bring this back.
   var opposingSide = dominantSide === 'BUY' ? 'bear' : 'bull';
   var contradictions = 0;
   for (var ri = 0; ri < reasonSide.length; ri++) {
     if (reasonSide[ri] === opposingSide) contradictions++;
   }
-  if (contradictions >= 2) {
-    return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradictionBlocked: true };
-  }
+  //if (contradictions >= 2) {
+  //  return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradictionBlocked: true };
+  //}
 
   if (reasons.length < 2) return null;
 
@@ -933,14 +928,15 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, directionFiltered: true };
   }
 
-  // ── Contradiction check ────────────────────────────────────────────
-  // Block if 2+ of this signal's own named reasons actively disagree
-  // with the direction it's about to fire -- see countContradictions()
-  // for the real trade (#143) that motivated this.
-  var contradictions = countContradictions(reasons, dominantSide);
-  if (contradictions >= 2) {
-    return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradicted: true, contradictionCount: contradictions };
-  }
+  // ── Contradiction check #2 -- TEMPORARILY DISABLED ──────────────────
+  // This was the real cause of today's near-total silence: it duplicated
+  // check #1 above but with the OLD, unrefined criteria (still counting
+  // RSI/Stochastic/Bollinger), silently undoing that refinement entirely
+  // since this ran as a second gate right after it. Disabled alongside #1.
+  var contradictions2 = countContradictions(reasons, dominantSide);
+  //if (contradictions2 >= 2) {
+  //  return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradicted: true, contradictionCount: contradictions2 };
+  //}
 
   var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override);
   var confidence = Math.min(85, 65 + (dominantVotes - threshold) * 5 - (minorityVotes * 3));
