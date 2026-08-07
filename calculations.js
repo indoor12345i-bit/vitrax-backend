@@ -825,7 +825,14 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   if (atrVal < 5) return null;
 
   var reasons = [];
-  var reasonSide = []; // parallel to reasons -- 'bull' or 'bear' for each one, used to count contradictions below
+  var reasonSide = []; // parallel to reasons, but ONLY for MTF/MACD/AVWAP -- the
+                        // three that reflect genuine directional disagreement.
+                        // RSI/Stochastic/Bollinger overbought-or-oversold reasons
+                        // are excluded on purpose: those can just reflect a
+                        // strong, sustained trend running hot, not real conflict,
+                        // and counting them made the contradiction check block
+                        // roughly 14 of 22 real signals in one day -- most of them
+                        // for that reason alone, not genuine disagreement.
   var bullVotes = 0, bearVotes = 0;
 
   var e14arr = ema(closes, 14), e25arr = ema(closes, 25);
@@ -844,8 +851,8 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var rsiArr = rsi(closes, 14);
   var rsiV = rsiArr[rsiArr.length - 1] || 50;
 
-  if (rsiV < 35) { bullVotes++; reasons.push('RSI oversold (' + rsiV.toFixed(0) + ')'); reasonSide.push('bull'); }
-  else if (rsiV > 65) { bearVotes++; reasons.push('RSI overbought (' + rsiV.toFixed(0) + ')'); reasonSide.push('bear'); }
+  if (rsiV < 35) { bullVotes++; reasons.push('RSI oversold (' + rsiV.toFixed(0) + ')'); }
+  else if (rsiV > 65) { bearVotes++; reasons.push('RSI overbought (' + rsiV.toFixed(0) + ')'); }
   else if (rsiV < 50) bullVotes++;
   else bearVotes++;
 
@@ -860,8 +867,8 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var stochData = stochastic(closes, highs, lows, 14, 3);
   var kv = stochData.k[stochData.k.length - 1];
   var dv = stochData.d[stochData.d.length - 1];
-  if (kv < 25 && dv < 25) { bullVotes++; reasons.push('Stochastic oversold'); reasonSide.push('bull'); }
-  else if (kv > 75 && dv > 75) { bearVotes++; reasons.push('Stochastic overbought'); reasonSide.push('bear'); }
+  if (kv < 25 && dv < 25) { bullVotes++; reasons.push('Stochastic oversold'); }
+  else if (kv > 75 && dv > 75) { bearVotes++; reasons.push('Stochastic overbought'); }
   else if (kv < 50) bullVotes++;
   else bearVotes++;
 
@@ -870,8 +877,8 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var lower = bollData.lower[bollData.lower.length - 1];
   var mid   = bollData.mid[bollData.mid.length - 1];
 
-  if (p < mid) { bullVotes++; if (p <= lower) { reasons.push('Price at/below Bollinger lower'); reasonSide.push('bull'); } }
-  else { bearVotes++; if (p >= upper) { reasons.push('Price at/above Bollinger upper'); reasonSide.push('bear'); } }
+  if (p < mid) { bullVotes++; if (p <= lower) { reasons.push('Price at/below Bollinger lower'); } }
+  else { bearVotes++; if (p >= upper) { reasons.push('Price at/above Bollinger upper'); } }
 
   var avwap = candles ? calcAVWAP(candles) : null;
   if (avwap) {
