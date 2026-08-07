@@ -45,7 +45,7 @@ const PORT = process.env.PORT || 3000;
 // two can never drift out of sync with each other again the way they did
 // before this fix -- server.js used to hardcode "6" in ten separate spots,
 // completely independent of whatever calculations.js actually required.
-const VOTE_THRESHOLD = 7;
+const VOTE_THRESHOLD = 6;
 
 let lastEmergencyTime = null; // prevent spamming emergency signals
 
