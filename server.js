@@ -363,6 +363,19 @@ async function checkHighConfluenceSignal() {
           updatedAt: new Date().toISOString(),
         };
       }
+    } else if (!hc) {
+      // UPDATE: checkHighConfluence can return null for a few honest reasons
+      // (market briefly too choppy, volatility dipped below the floor, not
+      // enough candle history yet). Previously that meant currentVoteStatus
+      // just wasn't touched at all -- it kept showing whatever it last
+      // computed, with a stale updatedAt, indistinguishable from a genuinely
+      // fresh reading. This makes every cycle produce an honest, current
+      // snapshot instead of silently freezing on old data.
+      currentVoteStatus = {
+        direction: null, votes: 0, against: 0, threshold: VOTE_THRESHOLD,
+        blockedReason: 'no clear reading this cycle (market too choppy, low volatility, or insufficient data)',
+        updatedAt: new Date().toISOString(),
+      };
     }
 
     if (hc && !hc.belowThreshold && hc.signal) {
