@@ -336,16 +336,33 @@ async function checkHighConfluenceSignal() {
       var dominant = hc.dominantSide || (hc.bullVotes > hc.bearVotes ? 'BUY' : 'SELL');
       var domVotes = Math.max(hc.bullVotes, hc.bearVotes);
       var minVotes = Math.min(hc.bullVotes, hc.bearVotes);
-      console.log(`[VOTES] ${dominant} ${domVotes}/6 needed (${minVotes} against) — need ${Math.max(0, 6-domVotes)} more votes`);
 
-      currentVoteStatus = {
-        direction: dominant,
-        votes: domVotes,
-        against: minVotes,
-        threshold: VOTE_THRESHOLD,
-        blockedReason: null,
-        updatedAt: new Date().toISOString(),
-      };
+      // UPDATE: the contradiction check (calculations.js) also returns
+      // belowThreshold:true when it blocks a setup that actually cleared
+      // votes -- previously that looked identical to "still building" from
+      // here, even though votes could show 7/6 with nothing visibly wrong.
+      // This makes that specific case visible instead of silent.
+      if (hc.contradictionBlocked) {
+        console.log(`[VOTES] ${dominant} cleared ${domVotes}/${VOTE_THRESHOLD} votes but 2+ of its own reasons contradict the direction — blocked`);
+        currentVoteStatus = {
+          direction: dominant,
+          votes: domVotes,
+          against: minVotes,
+          threshold: VOTE_THRESHOLD,
+          blockedReason: 'cleared votes but 2+ named reasons contradict the direction',
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        console.log(`[VOTES] ${dominant} ${domVotes}/${VOTE_THRESHOLD} needed (${minVotes} against) — need ${Math.max(0, VOTE_THRESHOLD-domVotes)} more votes`);
+        currentVoteStatus = {
+          direction: dominant,
+          votes: domVotes,
+          against: minVotes,
+          threshold: VOTE_THRESHOLD,
+          blockedReason: null,
+          updatedAt: new Date().toISOString(),
+        };
+      }
     }
 
     if (hc && !hc.belowThreshold && hc.signal) {
