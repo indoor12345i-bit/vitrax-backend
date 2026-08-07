@@ -345,6 +345,32 @@ function calcMTF(candles4h, candlesDaily) {
   return { score: mtfScore, reasons: mtfReasons };
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// CONTRADICTION CHECK
+//
+// Counts how many of a signal's OWN named reasons actively disagree with
+// the direction it's about to fire. Found real, direct evidence this
+// matters: trade #143 fired as a BUY while its own reasons included
+// "MACD bearish momentum" and "Below AVWAP" -- it still cleared the vote
+// threshold from other, quieter indicators, but went in with visible
+// internal disagreement. This blocks that specific pattern going forward.
+// ════════════════════════════════════════════════════════════════════════
+function countContradictions(reasons, direction) {
+  var bullishPhrases = ['MTF strongly bullish', 'RSI oversold', 'MACD bullish momentum', 'Stochastic oversold', 'Bollinger lower', 'Above AVWAP'];
+  var bearishPhrases  = ['MTF strongly bearish', 'RSI overbought', 'MACD bearish momentum', 'Stochastic overbought', 'Bollinger upper', 'Below AVWAP'];
+
+  var opposing = direction === 'BUY' ? bearishPhrases : bullishPhrases;
+  var count = 0;
+
+  reasons.forEach(function(r) {
+    for (var i = 0; i < opposing.length; i++) {
+      if (r.indexOf(opposing[i]) !== -1) { count++; break; }
+    }
+  });
+
+  return count;
+}
+
 function calcAVWAP(candles) {
   if (!candles || candles.length === 0) return null;
 
@@ -480,6 +506,15 @@ function checkSessionTradable(sessionInfo, atDate) {
     return { ok: false, reason: 'market closed for the weekend (closed ~21:00 UTC Friday)' };
   }
 
+  // UPDATE: hard cutoff at 8pm Lebanon time (17:00 UTC) -- no new trades
+  // fire after this, no matter what session label is showing. This cuts
+  // the "New York" label down to effectively one hour (7pm-8pm Lebanon),
+  // since that label otherwise runs up to near midnight. London is
+  // unaffected -- it's already finished well before this point.
+  if (utcH >= 17) {
+    return { ok: false, reason: 'after the 8pm Lebanon time cutoff' };
+  }
+
   if (sessionInfo.session !== 'London' && sessionInfo.session !== 'New York') {
     return { ok: false, reason: 'session is ' + sessionInfo.session + ' — only London/New York are tradable' };
   }
@@ -488,10 +523,6 @@ function checkSessionTradable(sessionInfo, atDate) {
 
   if (utcH === 7 && minutesIntoHour < 15) {
     return { ok: false, reason: 'within 15 min of London open (07:00 UTC) — opening rush, wait for it to settle' };
-  }
-
-  if (utcH === 20 && minutesIntoHour >= 45) {
-    return { ok: false, reason: 'within 15 min of New York close (21:00 UTC) — closing unwind, too erratic' };
   }
 
   return { ok: true, reason: sessionInfo.session };
@@ -782,7 +813,10 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 // with real cooldown behavior, before anyone decides to run it live.
 // ════════════════════════════════════════════════════════════════════════
 function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override, directionFilter) {
-  var threshold = voteThreshold || 6;
+  // UPDATE: default raised from 6 to 7 -- backed by real backtest evidence
+  // from tonight (57% -> 60% win rate when this was tested at 7 vs 6).
+  // Still overridable by the backtest tool's own ?votes= param.
+  var threshold = voteThreshold || 7;
   if (!closes || closes.length < 30) return null;
 
   var p = closes[closes.length - 1];
@@ -791,6 +825,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   if (atrVal < 5) return null;
 
   var reasons = [];
+  var reasonSide = []; // parallel to reasons -- 'bull' or 'bear' for each one, used to count contradictions below
   var bullVotes = 0, bearVotes = 0;
 
   var e14arr = ema(closes, 14), e25arr = ema(closes, 25);
@@ -801,32 +836,32 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   if (e14v > e25v) bullVotes++; else bearVotes++;
 
   var mtf = calcMTF(candles4h, candlesDaily);
-  if (mtf.score >= 2) { bullVotes += 2; reasons.push('MTF strongly bullish'); }
-  else if (mtf.score <= -2) { bearVotes += 2; reasons.push('MTF strongly bearish'); }
+  if (mtf.score >= 2) { bullVotes += 2; reasons.push('MTF strongly bullish'); reasonSide.push('bull'); }
+  else if (mtf.score <= -2) { bearVotes += 2; reasons.push('MTF strongly bearish'); reasonSide.push('bear'); }
   else if (mtf.score === 1) bullVotes++;
   else if (mtf.score === -1) bearVotes++;
 
   var rsiArr = rsi(closes, 14);
   var rsiV = rsiArr[rsiArr.length - 1] || 50;
 
-  if (rsiV < 35) { bullVotes++; reasons.push('RSI oversold (' + rsiV.toFixed(0) + ')'); }
-  else if (rsiV > 65) { bearVotes++; reasons.push('RSI overbought (' + rsiV.toFixed(0) + ')'); }
+  if (rsiV < 35) { bullVotes++; reasons.push('RSI oversold (' + rsiV.toFixed(0) + ')'); reasonSide.push('bull'); }
+  else if (rsiV > 65) { bearVotes++; reasons.push('RSI overbought (' + rsiV.toFixed(0) + ')'); reasonSide.push('bear'); }
   else if (rsiV < 50) bullVotes++;
   else bearVotes++;
 
   var macdData = macd(closes);
   var hist = macdData.hist[macdData.hist.length - 1];
   var prevHist = macdData.hist[macdData.hist.length - 2];
-  if (hist > 0 && hist > prevHist) { bullVotes++; reasons.push('MACD bullish momentum'); }
-  else if (hist < 0 && hist < prevHist) { bearVotes++; reasons.push('MACD bearish momentum'); }
+  if (hist > 0 && hist > prevHist) { bullVotes++; reasons.push('MACD bullish momentum'); reasonSide.push('bull'); }
+  else if (hist < 0 && hist < prevHist) { bearVotes++; reasons.push('MACD bearish momentum'); reasonSide.push('bear'); }
   else if (hist > 0) bullVotes++;
   else bearVotes++;
 
   var stochData = stochastic(closes, highs, lows, 14, 3);
   var kv = stochData.k[stochData.k.length - 1];
   var dv = stochData.d[stochData.d.length - 1];
-  if (kv < 25 && dv < 25) { bullVotes++; reasons.push('Stochastic oversold'); }
-  else if (kv > 75 && dv > 75) { bearVotes++; reasons.push('Stochastic overbought'); }
+  if (kv < 25 && dv < 25) { bullVotes++; reasons.push('Stochastic oversold'); reasonSide.push('bull'); }
+  else if (kv > 75 && dv > 75) { bearVotes++; reasons.push('Stochastic overbought'); reasonSide.push('bear'); }
   else if (kv < 50) bullVotes++;
   else bearVotes++;
 
@@ -835,13 +870,13 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var lower = bollData.lower[bollData.lower.length - 1];
   var mid   = bollData.mid[bollData.mid.length - 1];
 
-  if (p < mid) { bullVotes++; if (p <= lower) reasons.push('Price at/below Bollinger lower'); }
-  else { bearVotes++; if (p >= upper) reasons.push('Price at/above Bollinger upper'); }
+  if (p < mid) { bullVotes++; if (p <= lower) { reasons.push('Price at/below Bollinger lower'); reasonSide.push('bull'); } }
+  else { bearVotes++; if (p >= upper) { reasons.push('Price at/above Bollinger upper'); reasonSide.push('bear'); } }
 
   var avwap = candles ? calcAVWAP(candles) : null;
   if (avwap) {
-    if (p > avwap) { bullVotes++; reasons.push('Above AVWAP ($' + avwap + ')'); }
-    else { bearVotes++; reasons.push('Below AVWAP ($' + avwap + ')'); }
+    if (p > avwap) { bullVotes++; reasons.push('Above AVWAP ($' + avwap + ')'); reasonSide.push('bull'); }
+    else { bearVotes++; reasons.push('Below AVWAP ($' + avwap + ')'); reasonSide.push('bear'); }
   }
 
   var whale = detectWhale(closes);
@@ -861,6 +896,22 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true };
   }
 
+  // ── Contradiction check ────────────────────────────────────────────
+  // Blocks a signal if 2 or more of its OWN named reasons actively
+  // disagree with the direction about to fire -- e.g. firing BUY while
+  // "MACD bearish momentum" and "Below AVWAP" are both sitting in its
+  // own reasons list. This is exactly what happened with a real trade
+  // tonight (a BUY that fired carrying two contradicting reasons and
+  // went on to lose) -- a real, observed gap, not a hypothetical one.
+  var opposingSide = dominantSide === 'BUY' ? 'bear' : 'bull';
+  var contradictions = 0;
+  for (var ri = 0; ri < reasonSide.length; ri++) {
+    if (reasonSide[ri] === opposingSide) contradictions++;
+  }
+  if (contradictions >= 2) {
+    return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradictionBlocked: true };
+  }
+
   if (reasons.length < 2) return null;
 
   // ── Direction filter (backtest-only feature) ─────────────────────────
@@ -873,6 +924,15 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   // SELL-only config would have left open for another SELL to use instead.
   if (directionFilter && dominantSide !== directionFilter) {
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, directionFiltered: true };
+  }
+
+  // ── Contradiction check ────────────────────────────────────────────
+  // Block if 2+ of this signal's own named reasons actively disagree
+  // with the direction it's about to fire -- see countContradictions()
+  // for the real trade (#143) that motivated this.
+  var contradictions = countContradictions(reasons, dominantSide);
+  if (contradictions >= 2) {
+    return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradicted: true, contradictionCount: contradictions };
   }
 
   var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override);
@@ -1037,6 +1097,6 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, checkSessionTradable, detectWhale, detectStopHunt,
-  checkEconEvent, isWithinNewsBlackout, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern,
+  checkEconEvent, isWithinNewsBlackout, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern, countContradictions,
   ECON_EVENTS
 };
