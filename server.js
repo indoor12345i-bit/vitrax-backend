@@ -39,6 +39,14 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+// Single source of truth for the vote threshold shown in currentVoteStatus.
+// UPDATE: raised 6 -> 7 tonight. This constant is what actually gets used
+// below (both for display AND passed to calc.checkHighConfluence), so the
+// two can never drift out of sync with each other again the way they did
+// before this fix -- server.js used to hardcode "6" in ten separate spots,
+// completely independent of whatever calculations.js actually required.
+const VOTE_THRESHOLD = 7;
+
 let lastEmergencyTime = null; // prevent spamming emergency signals
 
 // ── Live vote status — what the dashboard polls to show "building" progress ──
@@ -46,7 +54,7 @@ let currentVoteStatus = {
   direction: null,
   votes: 0,
   against: 0,
-  threshold: 6,
+  threshold: VOTE_THRESHOLD,
   blockedReason: null,
   updatedAt: null,
 };
@@ -287,7 +295,7 @@ async function checkHighConfluenceSignal() {
     if (!candles || candles.length < 20) {
       console.log('[HIGH CONFLUENCE] Insufficient candle data — skipping');
       currentVoteStatus = {
-        direction: null, votes: 0, against: 0, threshold: 6,
+        direction: null, votes: 0, against: 0, threshold: VOTE_THRESHOLD,
         blockedReason: 'candle data unavailable or stale', updatedAt: new Date().toISOString(),
       };
       return;
@@ -306,7 +314,7 @@ async function checkHighConfluenceSignal() {
     if (!earlySessionCheck.ok) {
       console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${earlySessionCheck.reason} — skipping`);
       currentVoteStatus = {
-        direction: null, votes: 0, against: 0, threshold: 6,
+        direction: null, votes: 0, against: 0, threshold: VOTE_THRESHOLD,
         blockedReason: earlySessionCheck.reason, updatedAt: new Date().toISOString(),
       };
       return;
@@ -315,14 +323,14 @@ async function checkHighConfluenceSignal() {
     if (trackPriceAndCheckFrozen(currentPrice)) {
       console.log(`[SCAN] $${currentPrice.toFixed(2)} — market appears CLOSED (frozen price) — skipping`);
       currentVoteStatus = {
-        direction: null, votes: 0, against: 0, threshold: 6,
+        direction: null, votes: 0, against: 0, threshold: VOTE_THRESHOLD,
         blockedReason: 'price feed frozen — market likely closed', updatedAt: new Date().toISOString(),
       };
       return;
     }
 
     console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${new Date().toISOString().substr(11,8)} UTC`);
-    const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily);
+    const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily, VOTE_THRESHOLD);
 
     if (hc && hc.belowThreshold) {
       var dominant = hc.dominantSide || (hc.bullVotes > hc.bearVotes ? 'BUY' : 'SELL');
@@ -334,7 +342,7 @@ async function checkHighConfluenceSignal() {
         direction: dominant,
         votes: domVotes,
         against: minVotes,
-        threshold: 6,
+        threshold: VOTE_THRESHOLD,
         blockedReason: null,
         updatedAt: new Date().toISOString(),
       };
@@ -363,25 +371,25 @@ async function checkHighConfluenceSignal() {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but ${sessionCheck.reason}`);
         currentVoteStatus = {
           direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
-          threshold: 6, blockedReason: sessionCheck.reason, updatedAt: new Date().toISOString(),
+          threshold: VOTE_THRESHOLD, blockedReason: sessionCheck.reason, updatedAt: new Date().toISOString(),
         };
       } else if (!spreadOk) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but spread is $${spread.toFixed(2)} (max $0.50) — skipping this cycle`);
         currentVoteStatus = {
           direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
-          threshold: 6, blockedReason: `spread too wide ($${spread.toFixed(2)})`, updatedAt: new Date().toISOString(),
+          threshold: VOTE_THRESHOLD, blockedReason: `spread too wide ($${spread.toFixed(2)})`, updatedAt: new Date().toISOString(),
         };
       } else if (newsCheck.blocked) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but within 20 min of "${newsCheck.event}" — skipping regular signal (spike detector remains active for the actual move)`);
         currentVoteStatus = {
           direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
-          threshold: 6, blockedReason: `near "${newsCheck.event}" release`, updatedAt: new Date().toISOString(),
+          threshold: VOTE_THRESHOLD, blockedReason: `near "${newsCheck.event}" release`, updatedAt: new Date().toISOString(),
         };
       } else if (hasOpenTrade) {
         console.log(`[BLOCKED] ${hc.signal} setup reached threshold but trade #${openTrades[0].id} is still open — waiting for it to close first`);
         currentVoteStatus = {
           direction: hc.signal, votes: Math.max(hc.bullVotes, hc.bearVotes), against: Math.min(hc.bullVotes, hc.bearVotes),
-          threshold: 6, blockedReason: `trade #${openTrades[0].id} still open — waiting for it to close`, updatedAt: new Date().toISOString(),
+          threshold: VOTE_THRESHOLD, blockedReason: `trade #${openTrades[0].id} still open — waiting for it to close`, updatedAt: new Date().toISOString(),
         };
       } else {
         console.log('\n🔥 HIGH CONFLUENCE SIGNAL TRIGGERED:', hc.signal, 'at $' + currentPrice);
@@ -409,7 +417,7 @@ async function checkHighConfluenceSignal() {
         await telegram.sendSignalAlert(sig);
         lastEmergencyTime = Date.now();
 
-        currentVoteStatus = { direction: null, votes: 0, against: 0, threshold: 6, blockedReason: null, updatedAt: new Date().toISOString() };
+        currentVoteStatus = { direction: null, votes: 0, against: 0, threshold: VOTE_THRESHOLD, blockedReason: null, updatedAt: new Date().toISOString() };
       }
     }
   } catch (err) {
