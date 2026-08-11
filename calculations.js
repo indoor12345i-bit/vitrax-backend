@@ -809,7 +809,7 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 // backtest can measure what a direction-restricted config would really do,
 // with real cooldown behavior, before anyone decides to run it live.
 // ════════════════════════════════════════════════════════════════════════
-function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override, directionFilter) {
+function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter) {
   // UPDATE: default raised from 6 to 7 -- backed by real backtest evidence
   // from tonight (57% -> 60% win rate when this was tested at 7 vs 6).
   // Still overridable by the backtest tool's own ?votes= param.
@@ -938,7 +938,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   //  return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradicted: true, contradictionCount: contradictions2 };
   //}
 
-  var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override);
+  var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override, slOverride);
   var confidence = Math.min(85, 65 + (dominantVotes - threshold) * 5 - (minorityVotes * 3));
 
   console.log('[HIGH CONFLUENCE] ' + dominantSide + ' detected — ' + dominantVotes + '/' + totalVotes + ' votes | confidence ' + confidence + '%');
