@@ -592,11 +592,11 @@ app.get('/api/backtest', async (req, res) => {
     const hours4h = Math.ceil(hours1h / 3);
     const hoursDaily = Math.ceil(hours1h / 15);
     const voteThreshold = parseInt(req.query.votes) || 6;
-    const tp1Override = req.query.tp1 ? parseFloat(req.query.tp1) : undefined;
-    const tp2Override = req.query.tp2 ? parseFloat(req.query.tp2) : undefined;
+    const tp1Override = req.query.tp ? parseFloat(req.query.tp) : undefined;
+    const slOverride = req.query.sl ? parseFloat(req.query.sl) : undefined;
     const directionFilter = req.query.direction ? req.query.direction.toUpperCase() : null;
 
-    console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}${directionFilter ? `, direction=${directionFilter}` : ''}...`);
+    console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}, tp=${tp1Override||6}, sl=${slOverride||8}${directionFilter ? `, direction=${directionFilter}` : ''}...`);
 
     let fetchErrors = {};
     const [candles1h, candles4h, candlesDaily] = await Promise.all([
@@ -623,7 +623,7 @@ app.get('/api/backtest', async (req, res) => {
       });
     }
 
-    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, tp2Override, directionFilter);
+    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
     res.json(results);
