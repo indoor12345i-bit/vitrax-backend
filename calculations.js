@@ -813,7 +813,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   // UPDATE: default raised from 6 to 7 -- backed by real backtest evidence
   // from tonight (57% -> 60% win rate when this was tested at 7 vs 6).
   // Still overridable by the backtest tool's own ?votes= param.
-  var threshold = voteThreshold || 7;
+  var threshold = voteThreshold || 6;
   if (!closes || closes.length < 30) return null;
 
   var p = closes[closes.length - 1];
