@@ -595,6 +595,7 @@ app.get('/api/backtest', async (req, res) => {
     const tp1Override = req.query.tp ? parseFloat(req.query.tp) : undefined;
     const slOverride = req.query.sl ? parseFloat(req.query.sl) : undefined;
     const directionFilter = req.query.direction ? req.query.direction.toUpperCase() : null;
+    const allDaySessions = req.query.allday === 'true';
 
     console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}, tp=${tp1Override||6}, sl=${slOverride||8}${directionFilter ? `, direction=${directionFilter}` : ''}...`);
 
@@ -623,7 +624,7 @@ app.get('/api/backtest', async (req, res) => {
       });
     }
 
-    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter);
+    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
     res.json(results);
