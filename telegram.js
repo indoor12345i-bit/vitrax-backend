@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════════
 // TELEGRAM NOTIFICATIONS — Vipertex Gold Signals
-// Single-target model: TP $6, breakeven trigger $3.30, SL $8 (flat)
+// Single-target model: TP $10, breakeven trigger $5.50, SL $15 (flat)
 // ════════════════════════════════════════════════════════════════════════
 
 const TELEGRAM_TOKEN   = process.env.TELEGRAM_TOKEN   || '8285392664:AAGi0-cATBXsh4YijfzlYjUWBUvNTtDGoPo';
@@ -46,7 +46,7 @@ async function sendSignalAlert(sig) {
   await send(msg);
 }
 
-// ── Breakeven alert — profit has reached $3.30 ─────────────────────────
+// ── Breakeven alert — profit has reached $5.50 ─────────────────────────
 async function sendBreakevenAlert(tradeId, entry, newSL, currentPrice) {
   const currentProfit = Math.abs(currentPrice - entry).toFixed(2);
 
