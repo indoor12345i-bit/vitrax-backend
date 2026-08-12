@@ -226,7 +226,7 @@ async function checkEmergency() {
       const spike = calc.checkCandleSpike(candles, curP);
       if (spike) {
         const sessionInfo = calc.detectSession();
-        const sessionCheck = checkSessionTradable(sessionInfo);
+        const sessionCheck = checkSessionTradable(sessionInfo, undefined, true); // all-day mode, live as of tonight's test results
 
         if (!sessionCheck.ok) {
           console.log(`[BLOCKED] ${spike.signal} candle spike detected but ${sessionCheck.reason}`);
@@ -310,7 +310,7 @@ async function checkHighConfluenceSignal() {
     const liveCloses = [...closes.slice(0, -1), currentPrice];
 
     const earlySessionInfo = calc.detectSession();
-    const earlySessionCheck = checkSessionTradable(earlySessionInfo);
+    const earlySessionCheck = checkSessionTradable(earlySessionInfo, undefined, true); // all-day mode, live as of tonight's test results
     if (!earlySessionCheck.ok) {
       console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${earlySessionCheck.reason} — skipping`);
       currentVoteStatus = {
@@ -380,7 +380,7 @@ async function checkHighConfluenceSignal() {
 
     if (hc && !hc.belowThreshold && hc.signal) {
       const sessionInfo = calc.detectSession();
-      const sessionCheck = checkSessionTradable(sessionInfo);
+      const sessionCheck = checkSessionTradable(sessionInfo, undefined, true); // all-day mode, live as of tonight's test results
 
       const spread = mt5Price && mt5Price.ask && mt5Price.bid ? (mt5Price.ask - mt5Price.bid) : null;
       const spreadOk = spread === null ? true : spread <= 0.50;
