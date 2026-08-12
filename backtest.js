@@ -45,7 +45,7 @@ const MIN_1H_LOOKBACK = 100;   // ~4 days of hourly history before evaluating
 const MIN_4H_LOOKBACK = 15;
 const MIN_DAILY_LOOKBACK = 14;
 
-async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter) {
+async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions) {
   const threshold = voteThreshold || 6; // matches live default unless overridden
   if (!candles1h || candles1h.length < MIN_1H_LOOKBACK + 20) {
     return { error: `Not enough historical 1h candles — need at least ${MIN_1H_LOOKBACK + 20}, got ${candles1h ? candles1h.length : 0}` };
@@ -115,7 +115,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
     // honest: a signal that would have been filtered out live is filtered
     // out here too.
     const sessionInfo = calc.detectSession(candleTime);
-    const sessionCheck = calc.checkSessionTradable(sessionInfo, candleTime);
+    const sessionCheck = calc.checkSessionTradable(sessionInfo, candleTime, allDaySessions);
     if (!sessionCheck.ok) {
       skippedByFilter.session++;
       continue;
