@@ -415,8 +415,8 @@ function calcATR(closes, highs, lows, period) {
 function calcDynamicLevels(cur, sig, atr, rsiV, tpOverride, slOverride) {
   if (sig === 'WAIT') return { tp: null, sl: null, atr: atr };
 
-  var tpDist = tpOverride || 6;
-  var slDist = slOverride || 8;
+  var tpDist = tpOverride || 10;
+  var slDist = slOverride || 15;
 
   var tp, sl;
   if (sig === 'BUY') {
@@ -813,7 +813,7 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   // UPDATE: default raised from 6 to 7 -- backed by real backtest evidence
   // from tonight (57% -> 60% win rate when this was tested at 7 vs 6).
   // Still overridable by the backtest tool's own ?votes= param.
-  var threshold = voteThreshold || 6;
+  var threshold = voteThreshold || 7;
   if (!closes || closes.length < 30) return null;
 
   var p = closes[closes.length - 1];
