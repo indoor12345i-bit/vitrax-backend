@@ -490,7 +490,7 @@ function detectSession(atDate) {
   return { session:'Quiet', confidence:-5 };
 }
 
-function checkSessionTradable(sessionInfo, atDate) {
+function checkSessionTradable(sessionInfo, atDate, allDaySessions) {
   var now = atDate || new Date();
   var utcDay = now.getUTCDay();
   var utcH = now.getUTCHours();
@@ -506,11 +506,32 @@ function checkSessionTradable(sessionInfo, atDate) {
     return { ok: false, reason: 'market closed for the weekend (closed ~21:00 UTC Friday)' };
   }
 
-  // UPDATE: 8pm Lebanon cutoff -- TEMPORARILY DISABLED on request, restoring
-  // the original full London/New York window. Re-enable by uncommenting.
-  //if (utcH >= 17) {
-  //  return { ok: false, reason: 'after the 8pm Lebanon time cutoff' };
-  //}
+  // ── All-day mode (backtest-only, opt-in) ──────────────────────────────
+  // Trades all 24 hours instead of just London/New York, but adds a real
+  // 15-minute buffer on BOTH sides of each of the four actual session
+  // boundaries the system already tracks: Asian open (22:00 UTC), London
+  // open (07:00 UTC), New York open (16:00 UTC), New York close/Quiet
+  // start (21:00 UTC). Each boundary is simultaneously a close of the
+  // previous session and an open of the next, so one symmetric buffer
+  // per boundary covers both. Never used by the live path -- only fires
+  // when allDaySessions is explicitly passed true (the backtest only).
+  if (allDaySessions) {
+    var nowMin = utcH * 60 + utcM;
+    var boundaries = [
+      { min: 22 * 60, label: 'Asian open (22:00 UTC)' },
+      { min: 7 * 60,  label: 'London open (07:00 UTC)' },
+      { min: 16 * 60, label: 'New York open (16:00 UTC)' },
+      { min: 21 * 60, label: 'New York close (21:00 UTC)' },
+    ];
+    for (var bi = 0; bi < boundaries.length; bi++) {
+      var diff = Math.abs(nowMin - boundaries[bi].min);
+      diff = Math.min(diff, 1440 - diff);
+      if (diff <= 15) {
+        return { ok: false, reason: 'within 15 min of ' + boundaries[bi].label + ' — opening/closing rush' };
+      }
+    }
+    return { ok: true, reason: sessionInfo.session };
+  }
 
   if (sessionInfo.session !== 'London' && sessionInfo.session !== 'New York') {
     return { ok: false, reason: 'session is ' + sessionInfo.session + ' — only London/New York are tradable' };
@@ -520,6 +541,10 @@ function checkSessionTradable(sessionInfo, atDate) {
 
   if (utcH === 7 && minutesIntoHour < 15) {
     return { ok: false, reason: 'within 15 min of London open (07:00 UTC) — opening rush, wait for it to settle' };
+  }
+
+  if (utcH === 20 && minutesIntoHour >= 45) {
+    return { ok: false, reason: 'within 15 min of New York close (21:00 UTC) — closing unwind, too erratic' };
   }
 
   return { ok: true, reason: sessionInfo.session };
