@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════
-// TRADE MANAGEMENT — single-target model: breakeven at $3.30, TP at $6,
+// TRADE MANAGEMENT — single-target model: breakeven at $5.50, TP at $10,
 // SL at $8 (flat, set by calculations.js at signal creation). Every state
 // change below is atomic (see database.js) so a message can never fire
 // twice for the same trade, no matter how it's called or how many times.
@@ -47,13 +47,13 @@ async function checkOpenTrades(currentPrice) {
       continue;
     }
 
-    // ── Move SL to breakeven once profit reaches $3.30 ──────────────────
+    // ── Move SL to breakeven once profit reaches $5.50 ──────────────────
     const progressDollars = isBuy ? (currentPrice - entry) : (entry - currentPrice);
-    if (progressDollars >= 3.3 && trade.trade_status === 'OPEN') {
+    if (progressDollars >= 5.5 && trade.trade_status === 'OPEN') {
       const newSL = entry;
       const wasFirstTime = await db.markBreakevenReached(trade.id, newSL);
       if (wasFirstTime) {
-        console.log(`✅ Trade #${trade.id} reached $3.30 — SL moved to breakeven ($${newSL})`);
+        console.log(`✅ Trade #${trade.id} reached $5.50 — SL moved to breakeven ($${newSL})`);
         await telegram.sendBreakevenAlert(trade.id, entry, newSL, currentPrice);
       }
     }
