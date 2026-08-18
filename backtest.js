@@ -45,8 +45,9 @@ const MIN_1H_LOOKBACK = 100;   // ~4 days of hourly history before evaluating
 const MIN_4H_LOOKBACK = 15;
 const MIN_DAILY_LOOKBACK = 14;
 
-async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions) {
+async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions, spreadCost, minADX) {
   const threshold = voteThreshold || 6; // matches live default unless overridden
+  const spread = (spreadCost === undefined || spreadCost === null) ? 0 : spreadCost; // dollars per round-trip trade, applied to every closed trade
   if (!candles1h || candles1h.length < MIN_1H_LOOKBACK + 20) {
     return { error: `Not enough historical 1h candles — need at least ${MIN_1H_LOOKBACK + 20}, got ${candles1h ? candles1h.length : 0}` };
   }
@@ -102,7 +103,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
     // plus optional overrides -- undefined/null for any of them means
     // "use the live default", exactly as before. Only the backtest ever
     // passes a real tp1Override or slOverride; live signals never do.
-    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold, tp1Override, slOverride, directionFilter);
+    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold, tp1Override, slOverride, directionFilter, minADX);
 
     if (!hc || hc.belowThreshold || !hc.signal) {
       if (hc && hc.directionFiltered) skippedByFilter.directionFiltered++;
@@ -147,7 +148,8 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
     }
 
     if (outcome !== 'OPEN') {
-      const pnl = isBuy ? (exitPrice - entry) : (entry - exitPrice);
+      const rawPnl = isBuy ? (exitPrice - entry) : (entry - exitPrice);
+      const pnl = rawPnl - spread; // real cost: subtract spread from every trade, win or lose
       trades.push({
         time: candle.time,
         direction: hc.signal,
