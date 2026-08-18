@@ -412,6 +412,68 @@ function calcATR(closes, highs, lows, period) {
   return +atr.toFixed(2);
 }
 
+// ── ADX: measures TREND STRENGTH (not direction) ────────────────────────
+// This is the regime filter's core. ADX rising and above ~25 means a real,
+// strong trend is in force -- trend-following signals work best here. ADX
+// below ~20 means the market is ranging/choppy -- trend signals get chopped
+// up. Returns the current ADX value, or null if not enough data.
+// Standard Wilder's ADX over `period` bars.
+function calcADX(closes, highs, lows, period) {
+  period = period || 14;
+  var n = closes.length;
+  if (n < period * 2 + 1) return null;
+
+  var plusDM = [], minusDM = [], tr = [];
+  for (var i = 1; i < n; i++) {
+    var upMove = highs[i] - highs[i-1];
+    var downMove = lows[i-1] - lows[i];
+    plusDM.push((upMove > downMove && upMove > 0) ? upMove : 0);
+    minusDM.push((downMove > upMove && downMove > 0) ? downMove : 0);
+    var hl = highs[i] - lows[i];
+    var hc = Math.abs(highs[i] - closes[i-1]);
+    var lc = Math.abs(lows[i] - closes[i-1]);
+    tr.push(Math.max(hl, hc, lc));
+  }
+
+  // Wilder's smoothing
+  function smooth(arr) {
+    var sm = [];
+    var sum = 0;
+    for (var i = 0; i < period; i++) sum += arr[i];
+    sm.push(sum);
+    for (var i = period; i < arr.length; i++) {
+      sum = sum - (sum / period) + arr[i];
+      sm.push(sum);
+    }
+    return sm;
+  }
+
+  var smTR = smooth(tr);
+  var smPlusDM = smooth(plusDM);
+  var smMinusDM = smooth(minusDM);
+
+  var dx = [];
+  for (var i = 0; i < smTR.length; i++) {
+    if (smTR[i] === 0) { dx.push(0); continue; }
+    var plusDI = 100 * smPlusDM[i] / smTR[i];
+    var minusDI = 100 * smMinusDM[i] / smTR[i];
+    var diSum = plusDI + minusDI;
+    dx.push(diSum === 0 ? 0 : 100 * Math.abs(plusDI - minusDI) / diSum);
+  }
+
+  if (dx.length < period) return null;
+
+  // ADX = smoothed average of DX
+  var adx = 0;
+  for (var i = 0; i < period; i++) adx += dx[i];
+  adx = adx / period;
+  for (var i = period; i < dx.length; i++) {
+    adx = (adx * (period - 1) + dx[i]) / period;
+  }
+
+  return +adx.toFixed(1);
+}
+
 function calcDynamicLevels(cur, sig, atr, rsiV, tpOverride, slOverride) {
   if (sig === 'WAIT') return { tp: null, sl: null, atr: atr };
 
@@ -834,7 +896,7 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 // backtest can measure what a direction-restricted config would really do,
 // with real cooldown behavior, before anyone decides to run it live.
 // ════════════════════════════════════════════════════════════════════════
-function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter) {
+function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, minADX) {
   // UPDATE: default raised from 6 to 7 -- backed by real backtest evidence
   // from tonight (57% -> 60% win rate when this was tested at 7 vs 6).
   // Still overridable by the backtest tool's own ?votes= param.
@@ -845,6 +907,18 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
   var atrVal = calcATR(closes, highs, lows, 14);
 
   if (atrVal < 5) return null;
+
+  // ── Regime filter (optional) ────────────────────────────────────────
+  // If minADX is set, only allow signals when the market is genuinely
+  // trending (ADX >= minADX). Blocks trades during choppy, range-bound
+  // conditions where trend-following signals get chopped up. Off unless
+  // a minADX value is explicitly passed -- live behavior unchanged.
+  if (minADX && minADX > 0) {
+    var adx = calcADX(closes, highs, lows, 14);
+    if (adx === null || adx < minADX) {
+      return { signal: null, belowThreshold: true, regimeBlocked: true, adx: adx };
+    }
+  }
 
   var reasons = [];
   var reasonSide = []; // parallel to reasons, but ONLY for MTF/MACD/AVWAP -- the
@@ -1125,6 +1199,6 @@ function checkEmergencyTrigger(closes, highs, lows, candles) {
 module.exports = {
   ema, rsi, macd, bollinger, stochastic, calcATR, calcDynamicLevels, choppy,
   calcFearGreed, detectCandlePattern, detectSession, checkSessionTradable, detectWhale, detectStopHunt,
-  checkEconEvent, isWithinNewsBlackout, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern, countContradictions,
+  checkEconEvent, isWithinNewsBlackout, calcSignal, checkEmergencyTrigger, checkHighConfluence, checkCandleSpike, calcAVWAP, calcMTF, calcSupportResistance, calcVolumeProfile, calcPriceActionPattern, countContradictions, calcADX,
   ECON_EVENTS
 };
