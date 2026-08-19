@@ -598,6 +598,9 @@ app.get('/api/backtest', async (req, res) => {
     const allDaySessions = req.query.allday === 'true';
     const spreadCost = req.query.spread ? parseFloat(req.query.spread) : 0;
     const minADX = req.query.adx ? parseFloat(req.query.adx) : 0;
+    // EXPERIMENTAL (added for contradiction-check testing, 19 Aug 2026):
+    // ?contra=0 (default, matches live) | 1 (check 1 only) | 2 (check 2 only) | 3 (both)
+    const contradictionMode = req.query.contra ? parseInt(req.query.contra) : 0;
 
     console.log(`[BACKTEST] Fetching ${hours1h} 1h candles (~${Math.round(hours1h/24)} days), testing threshold=${voteThreshold}, tp=${tp1Override||6}, sl=${slOverride||8}${directionFilter ? `, direction=${directionFilter}` : ''}...`);
 
@@ -626,7 +629,7 @@ app.get('/api/backtest', async (req, res) => {
       });
     }
 
-    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions, spreadCost, minADX);
+    const results = await backtest.runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions, spreadCost, minADX, contradictionMode);
     console.log(`[BACKTEST] Done — ${results.totalSignals || 0} signals found, win rate: ${results.winRate}%`);
 
     res.json(results);
