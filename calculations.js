@@ -896,7 +896,13 @@ function calcSignal(closes, highs, lows, candles, candles4h, candlesDaily) {
 // backtest can measure what a direction-restricted config would really do,
 // with real cooldown behavior, before anyone decides to run it live.
 // ════════════════════════════════════════════════════════════════════════
-function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, minADX) {
+function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, minADX, contradictionMode) {
+  // EXPERIMENTAL PARAM (added for contradiction-check testing, 19 Aug 2026):
+  // contradictionMode: 0 = both checks off (default -- matches current live
+  // behavior exactly, nothing changes if this isn't passed), 1 = check #1
+  // only, 2 = check #2 only, 3 = both on.
+  var contraMode = contradictionMode || 0;
+
   // UPDATE: default raised from 6 to 7 -- backed by real backtest evidence
   // from tonight (57% -> 60% win rate when this was tested at 7 vs 6).
   // Still overridable by the backtest tool's own ?votes= param.
@@ -999,19 +1005,19 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true };
   }
 
-  // ── Contradiction check #1 -- TEMPORARILY DISABLED ──────────────────
-  // Turned off on request: real subscribers were waiting and this, combined
-  // with the second (also-disabled) check below, was cutting today down to
-  // almost nothing. Detection logic left in place -- just re-enable the
-  // return below to bring this back.
+  // ── Contradiction check #1 -- re-enabled conditionally for testing ──
+  // Detection logic unchanged from the original; only whether it can
+  // actually block a signal is now controlled by contraMode. Off by
+  // default (contraMode 0), so live behavior is untouched unless this
+  // param is explicitly passed.
   var opposingSide = dominantSide === 'BUY' ? 'bear' : 'bull';
   var contradictions = 0;
   for (var ri = 0; ri < reasonSide.length; ri++) {
     if (reasonSide[ri] === opposingSide) contradictions++;
   }
-  //if (contradictions >= 2) {
-  //  return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradictionBlocked: true };
-  //}
+  if ((contraMode === 1 || contraMode === 3) && contradictions >= 2) {
+    return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradictionBlocked: true, filteredBy: 'check1', contradictionCount: contradictions };
+  }
 
   if (reasons.length < 2) return null;
 
@@ -1027,15 +1033,13 @@ function checkHighConfluence(closes, highs, lows, candles, candles4h, candlesDai
     return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, directionFiltered: true };
   }
 
-  // ── Contradiction check #2 -- TEMPORARILY DISABLED ──────────────────
-  // This was the real cause of today's near-total silence: it duplicated
-  // check #1 above but with the OLD, unrefined criteria (still counting
-  // RSI/Stochastic/Bollinger), silently undoing that refinement entirely
-  // since this ran as a second gate right after it. Disabled alongside #1.
+  // ── Contradiction check #2 -- re-enabled conditionally for testing ──
+  // Broader than check #1 (all six sources, not just MTF/MACD/AVWAP).
+  // Same conditional gate, off by default.
   var contradictions2 = countContradictions(reasons, dominantSide);
-  //if (contradictions2 >= 2) {
-  //  return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradicted: true, contradictionCount: contradictions2 };
-  //}
+  if ((contraMode === 2 || contraMode === 3) && contradictions2 >= 2) {
+    return { signal: null, bullVotes: bullVotes, bearVotes: bearVotes, dominantSide: dominantSide, belowThreshold: true, contradicted: true, contradictionCount: contradictions2, filteredBy: 'check2' };
+  }
 
   var levels = calcDynamicLevels(p, dominantSide, atrVal, rsiV, tp1Override, slOverride);
   var confidence = Math.min(85, 65 + (dominantVotes - threshold) * 5 - (minorityVotes * 3));
