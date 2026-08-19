@@ -1,0 +1,35 @@
+# Vitrax Backend - Environment Variables
+# These get set in Railway's dashboard, NOT committed to GitHub.
+# DATABASE_URL is auto-provided by Railway when you attach a Postgres service.
+#
+# SECURITY FIX (19 Aug 2026 audit): every value below is now a placeholder.
+# The previous version of this file had real, working keys checked into
+# source control -- including MT5/MetaApi/Telegram, which weren't even
+# listed here before despite the code requiring them. All of the below are
+# now REQUIRED (no hardcoded fallback exists in the code anymore) except
+# where noted optional.
+
+DATABASE_URL=postgresql://user:password@host:port/database
+
+# MT5 / MetaApi -- required, no fallback. Use the NEW rotated values.
+METAAPI_TOKEN=your_new_metaapi_token_here
+MT5_LOGIN=your_mt5_login_here
+MT5_PASSWORD=your_new_mt5_password_here
+MT5_SERVER=PrimaCapital-Server
+
+# Telegram -- required, no fallback. Use the NEW rotated bot token.
+TELEGRAM_TOKEN=your_new_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_channel_chat_id_here
+
+# Price-fallback API keys (optional -- priceFetcher.js degrades gracefully
+# per missing key, only used when MT5 itself is unavailable)
+ALPHAVANTAGE_KEY=your_alphavantage_key_here
+GOLDAPI_KEY=your_goldapi_key_here
+GOLDPRICEZ_KEY=your_goldpricez_key_here
+METALPRICE_KEY=your_metalprice_key_here
+APININJAS_KEY=your_apininjas_key_here
+COMMODITY_KEY=your_commodity_key_here
+UNIRATE_KEY=your_unirate_key_here
+NEWSAPI_KEY=your_newsapi_key_here
+
+PORT=3000
