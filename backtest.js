@@ -45,8 +45,9 @@ const MIN_1H_LOOKBACK = 100;   // ~4 days of hourly history before evaluating
 const MIN_4H_LOOKBACK = 15;
 const MIN_DAILY_LOOKBACK = 14;
 
-async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions, spreadCost, minADX) {
+async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp1Override, slOverride, directionFilter, allDaySessions, spreadCost, minADX, contradictionMode) {
   const threshold = voteThreshold || 6; // matches live default unless overridden
+  const contraMode = contradictionMode || 0; // 0=off (default, matches live), 1=check1, 2=check2, 3=both
   const spread = (spreadCost === undefined || spreadCost === null) ? 0 : spreadCost; // dollars per round-trip trade, applied to every closed trade
   if (!candles1h || candles1h.length < MIN_1H_LOOKBACK + 20) {
     return { error: `Not enough historical 1h candles — need at least ${MIN_1H_LOOKBACK + 20}, got ${candles1h ? candles1h.length : 0}` };
@@ -57,7 +58,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
 
   const trades = [];
   let lastSignalTime = null;
-  let skippedByFilter = { session: 0, cooldown: 0, belowThreshold: 0, insufficientMTF: 0, directionFiltered: 0 };
+  let skippedByFilter = { session: 0, cooldown: 0, belowThreshold: 0, insufficientMTF: 0, directionFiltered: 0, contradiction1: 0, contradiction2: 0 };
 
   // Forward-only pointers into the 4h/daily arrays — since every array is
   // chronologically ordered and we only ever move forward in time, we can
@@ -103,10 +104,12 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
     // plus optional overrides -- undefined/null for any of them means
     // "use the live default", exactly as before. Only the backtest ever
     // passes a real tp1Override or slOverride; live signals never do.
-    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold, tp1Override, slOverride, directionFilter, minADX);
+    const hc = calc.checkHighConfluence(closes, highs, lows, subCandles, sub4h, subDaily, threshold, tp1Override, slOverride, directionFilter, minADX, contraMode);
 
     if (!hc || hc.belowThreshold || !hc.signal) {
-      if (hc && hc.directionFiltered) skippedByFilter.directionFiltered++;
+      if (hc && hc.filteredBy === 'check1') skippedByFilter.contradiction1++;
+      else if (hc && hc.filteredBy === 'check2') skippedByFilter.contradiction2++;
+      else if (hc && hc.directionFiltered) skippedByFilter.directionFiltered++;
       else if (hc && hc.belowThreshold) skippedByFilter.belowThreshold++;
       continue;
     }
@@ -195,6 +198,7 @@ async function runBacktest(candles1h, candles4h, candlesDaily, voteThreshold, tp
 
   return {
     voteThreshold: threshold,
+    contradictionMode: contraMode,
     tpUsed: tp1Override || 6,
     slUsed: slOverride || 8,
     directionFilter: directionFilter || 'BOTH',
