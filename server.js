@@ -47,6 +47,16 @@ const PORT = process.env.PORT || 3000;
 // completely independent of whatever calculations.js actually required.
 const VOTE_THRESHOLD = 6;
 
+// FROZEN STRATEGY CONFIG (PM-authorized, 19 Aug 2026, after two-window
+// out-of-sample validation): Check #2 on, Check #1 off. This is what
+// actually activates it for real signal generation -- everything tested
+// tonight before this point only exercised /api/backtest, never this path.
+// 0 = off, 1 = check1, 2 = check2, 3 = both (same meaning as contra= in
+// the backtest endpoint). Do not change without going back through the
+// same validation process -- this is meant to stay fixed during the
+// forward-observation phase, not be tuned further.
+const LIVE_CONTRADICTION_MODE = 2;
+
 let lastEmergencyTime = null; // prevent spamming emergency signals
 
 // ── Live vote status — what the dashboard polls to show "building" progress ──
@@ -330,7 +340,7 @@ async function checkHighConfluenceSignal() {
     }
 
     console.log(`[SCAN] $${currentPrice.toFixed(2)} — ${new Date().toISOString().substr(11,8)} UTC`);
-    const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily, VOTE_THRESHOLD);
+    const hc = calc.checkHighConfluence(liveCloses, highs, lows, candles, candles4h, candlesDaily, VOTE_THRESHOLD, undefined, undefined, null, 0, LIVE_CONTRADICTION_MODE);
 
     if (hc && hc.belowThreshold) {
       var dominant = hc.dominantSide || (hc.bullVotes > hc.bearVotes ? 'BUY' : 'SELL');
