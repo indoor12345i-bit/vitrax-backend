@@ -347,19 +347,25 @@ async function checkHighConfluenceSignal() {
       var domVotes = Math.max(hc.bullVotes, hc.bearVotes);
       var minVotes = Math.min(hc.bullVotes, hc.bearVotes);
 
-      // UPDATE: the contradiction check (calculations.js) also returns
-      // belowThreshold:true when it blocks a setup that actually cleared
+      // UPDATE: the contradiction checks (calculations.js) also return
+      // belowThreshold:true when they block a setup that actually cleared
       // votes -- previously that looked identical to "still building" from
       // here, even though votes could show 7/6 with nothing visibly wrong.
       // This makes that specific case visible instead of silent.
-      if (hc.contradictionBlocked) {
-        console.log(`[VOTES] ${dominant} cleared ${domVotes}/${VOTE_THRESHOLD} votes but 2+ of its own reasons contradict the direction — blocked`);
+      // FIX (19 Aug 2026): this only checked contradictionBlocked (check 1's
+      // flag). Now that check 2 is the one actually live, its differently-
+      // named flag (contradicted) was silently falling through to the
+      // generic "need N more votes" message -- correct decision, wrong log
+      // text. Now recognizes either check by name.
+      if (hc.contradictionBlocked || hc.contradicted) {
+        var whichCheck = hc.filteredBy === 'check1' ? 'Check 1' : 'Check 2';
+        console.log(`[VOTES] ${dominant} cleared ${domVotes}/${VOTE_THRESHOLD} votes but 2+ of its own reasons contradict the direction (${whichCheck}) — blocked`);
         currentVoteStatus = {
           direction: dominant,
           votes: domVotes,
           against: minVotes,
           threshold: VOTE_THRESHOLD,
-          blockedReason: 'cleared votes but 2+ named reasons contradict the direction',
+          blockedReason: `cleared votes but 2+ named reasons contradict the direction (${whichCheck})`,
           updatedAt: new Date().toISOString(),
         };
       } else {
