@@ -58,6 +58,14 @@ const VOTE_THRESHOLD = 6;
 const LIVE_CONTRADICTION_MODE = 2;
 
 let lastEmergencyTime = null; // prevent spamming emergency signals
+// FIX (24 Aug 2026): guards against checkHighConfluenceSignal overlapping
+// with itself. It's scheduled every minute but does real network I/O
+// (MetaApi calls); if one run is still in flight when the next minute
+// ticks, nothing was stopping a second concurrent run -- both could see
+// "no trade open yet" and both fire/send, producing near-duplicate
+// Telegram messages seconds apart. This makes a still-running check skip
+// the next tick instead of overlapping it.
+let confluenceCheckInProgress = false;
 
 // ── Live vote status — what the dashboard polls to show "building" progress ──
 let currentVoteStatus = {
@@ -297,6 +305,11 @@ async function checkEmergency() {
 // HIGH CONFLUENCE CHECK — runs every 5 minutes
 // ════════════════════════════════════════════════════════════════════════
 async function checkHighConfluenceSignal() {
+  if (confluenceCheckInProgress) {
+    console.log('[HIGH CONFLUENCE] Previous check still running — skipping this cycle to avoid overlap');
+    return;
+  }
+  confluenceCheckInProgress = true;
   try {
     if (lastEmergencyTime && (Date.now() - lastEmergencyTime) < 30 * 60 * 1000) return;
 
@@ -468,6 +481,8 @@ async function checkHighConfluenceSignal() {
     }
   } catch (err) {
     console.error('High confluence check failed:', err.message);
+  } finally {
+    confluenceCheckInProgress = false;
   }
 }
 
