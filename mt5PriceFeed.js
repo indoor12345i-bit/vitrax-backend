@@ -298,4 +298,24 @@ async function fetchMT5Candles(timeframe, count) {
   }
 }
 
-module.exports = { fetchMT5Price, fetchMT5Candles };
+module.exports = { fetchMT5Price, fetchMT5Candles, closeMT5Connection };
+
+// FIX (27 Aug 2026): every past redeploy killed the process without ever
+// telling MetaApi the connection was done. MetaApi's server only notices a
+// dead connection via its own timeout, not proactively -- so repeated
+// redeploys could leave orphaned subscriptions counted against this
+// account's 25-subscription cap, eventually triggering
+// LIMIT_ACCOUNT_SUBSCRIPTIONS_PER_USER (confirmed 27 Aug 2026 from a real
+// Railway log showing exactly this). Only one MetaApi account exists here
+// (confirmed from the dashboard) -- the gap was purely the missing clean
+// shutdown, not duplicate accounts. Called from server.js on SIGTERM/SIGINT.
+async function closeMT5Connection() {
+  if (cachedConnection) {
+    try {
+      await cachedConnection.close();
+      console.log('[MT5] Connection closed cleanly on shutdown -- subscription released.');
+    } catch (err) {
+      console.error('[MT5] Error closing connection on shutdown:', err.message);
+    }
+  }
+}
