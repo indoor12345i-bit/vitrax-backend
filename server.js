@@ -33,6 +33,18 @@ process.on('unhandledRejection', (reason) => {
   console.error('[FATAL-CAUGHT] Unhandled promise rejection (process kept alive):', reason);
 });
 
+// FIX (27 Aug 2026): Railway sends SIGTERM on every redeploy. Without this,
+// the process died with no chance to release its MetaApi subscription,
+// letting orphaned connections accumulate across repeated redeploys until
+// the 25-subscription cap was hit and new connections got rejected.
+async function gracefulShutdown(signal) {
+  console.log(`[SHUTDOWN] ${signal} received -- releasing MT5 connection before exit...`);
+  await mt5.closeMT5Connection();
+  process.exit(0);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
 const app = express();
 app.use(cors());
 app.use(express.json());
